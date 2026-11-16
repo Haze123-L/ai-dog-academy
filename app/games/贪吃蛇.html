@@ -1,0 +1,209 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, user-scalable=no">
+<title>贪吃蛇</title>
+<style>
+  html, body { margin: 0; height: 100%; background: #FFF7EC; font-family: "PingFang SC", "Microsoft YaHei", sans-serif; color: #1E2A4A; touch-action: none; }
+  #box { height: 100%; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 10px; }
+  h1 { margin: 0; font-size: 28px; }
+  canvas { width: min(96vw, 160vh); max-height: 82vh; aspect-ratio: 16 / 9; border-radius: 18px; box-shadow: 0 6px 0 #F0E2CC; background: #FFF7EC; }
+  p { margin: 0; color: #5B6683; font-size: 18px; }
+</style>
+</head>
+<body>
+<div id="box">
+  <h1>贪吃蛇</h1>
+  <canvas id="game" width="960" height="540"></canvas>
+  <p>点右边的箭头，或者按方向键，带蛇去吃东西</p>
+</div>
+
+<script>
+// ===== 游戏设置：想改游戏，先改这里 =====
+const 设置 = {
+  格子数: 10,            // 地图有几行、几列
+  走一格要几帧: 24,       // 数字越大，蛇走得越慢
+  一开始几格长: 3,        // 蛇一开始有几格
+  蛇的颜色: "#2ECC9A",   // 蛇身的颜色
+  背景颜色: "#BDE6FF",   // 地图的颜色
+  撞墙会输: true,         // 改成 false：从墙这边钻进去，从另一边出来
+};
+
+// ===== 地图上会出现的食物：吃到会怎样，写在这里 =====
+// 加几分：吃到加几分
+// 出现机会：数字越大，越常出现
+const 食物们 = [
+  { 名字: "苹果", 图案: "🍎", 加几分: 1, 出现机会: 1 },
+];
+
+// ===== 下面是游戏程序 =====
+const canvas = document.getElementById("game");
+const ctx = canvas.getContext("2d");
+const W = canvas.width, H = canvas.height;
+const 格子大小 = Math.floor(500 / 设置.格子数);
+const 地图X = 40, 地图Y = Math.floor((H - 格子大小 * 设置.格子数) / 2);
+const 上下 = { 上: -1, 下: 1, 左: 0, 右: 0 };
+const 左右 = { 上: 0, 下: 0, 左: -1, 右: 1 };
+const 反方向 = { 上: "下", 下: "上", 左: "右", 右: "左" };
+
+let 蛇身 = [];            // 蛇的身体：一串排好队的格子，第一个是头
+let 方向 = "右", 下一个方向 = "右";
+let 食物 = null;          // 现在地图上的食物：{ 行, 列, 东西 }
+let 分数 = 0;
+let 状态 = "玩";          // "玩" 或 "输了"
+let 帧数 = 0;
+let 话 = "", 话的寿命 = 0;  // 屏幕上的一句提示
+let 飘字们 = [];
+
+// 开一局新游戏
+function 开始() {
+  蛇身 = [];
+  for (let i = 0; i < 设置.一开始几格长; i++) 蛇身.push({ 行: Math.floor(设置.格子数 / 2), 列: 3 - i });
+  方向 = "右"; 下一个方向 = "右"; 分数 = 0; 状态 = "玩"; 飘字们 = [];
+  放食物();
+}
+
+// 按"出现机会"随机挑一种食物，放在空格子上
+function 放食物() {
+  let 总数 = 0;
+  for (const 东西 of 食物们) 总数 += 东西.出现机会 || 1;
+  let 随机 = Math.random() * 总数, 选中 = 食物们[0];
+  for (const 东西 of 食物们) { 随机 -= 东西.出现机会 || 1; if (随机 <= 0) { 选中 = 东西; break; } }
+  for (let 试 = 0; 试 < 200; 试++) {
+    const 行 = Math.floor(Math.random() * 设置.格子数), 列 = Math.floor(Math.random() * 设置.格子数);
+    if (!蛇身.some(节 => 节.行 === 行 && 节.列 === 列)) { 食物 = { 行, 列, 东西: 选中 }; return; }
+  }
+}
+
+// 蛇吃到东西时，会发生什么
+function 吃到(东西) {
+  分数 += 东西.加几分;
+  飘字("+" + 东西.加几分, 食物.行, 食物.列, "#18A87C");
+  说一句("咦，怎么没变长？");
+  放食物();
+}
+
+// 蛇走一步
+function 走一步() {
+  方向 = 下一个方向;
+  const 头 = 蛇身[0];
+  const 新头 = { 行: 头.行 + 上下[方向], 列: 头.列 + 左右[方向] };
+  const 出界 = 新头.行 < 0 || 新头.列 < 0 || 新头.行 >= 设置.格子数 || 新头.列 >= 设置.格子数;
+  if (出界 && 设置.撞墙会输) return 输了("撞墙了");
+  if (出界) { 新头.行 = (新头.行 + 设置.格子数) % 设置.格子数; 新头.列 = (新头.列 + 设置.格子数) % 设置.格子数; }
+
+  蛇身.unshift(新头);   // 前面加一格
+  const 吃到了 = 食物 && 新头.行 === 食物.行 && 新头.列 === 食物.列;
+  if (吃到了) 吃到(食物.东西);
+  蛇身.pop();           // 去掉尾巴
+
+  if (蛇身.slice(1).some(节 => 节.行 === 新头.行 && 节.列 === 新头.列)) 撞到自己();
+}
+
+function 撞到自己() { 输了("撞到自己了"); }
+function 输了(原因) { 状态 = "输了"; 说一句(原因 + "！点「再来一局」"); }
+function 走一格的间隔() { return 设置.走一格要几帧; }
+
+// ===== 操作：方向键，或者点右边的箭头 =====
+function 转向(新方向) {
+  if (状态 !== "玩") return;
+  if (新方向 === 反方向[方向] && 蛇身.length > 1) return;   // 不能直接掉头
+  下一个方向 = 新方向;
+}
+document.addEventListener("keydown", e => {
+  const 键 = { ArrowUp: "上", ArrowDown: "下", ArrowLeft: "左", ArrowRight: "右" }[e.key];
+  if (键) { 转向(键); e.preventDefault(); }
+});
+const 按钮们 = [
+  { 字: "上", x: 760, y: 180 }, { 字: "左", x: 670, y: 270 }, { 字: "右", x: 850, y: 270 }, { 字: "下", x: 760, y: 360 },
+];
+const 再来按钮 = { x: 760, y: 470, 宽: 220, 高: 64 };
+canvas.addEventListener("pointerdown", e => {
+  const r = canvas.getBoundingClientRect();
+  const x = (e.clientX - r.left) / r.width * W, y = (e.clientY - r.top) / r.height * H;
+  for (const b of 按钮们) if (Math.hypot(x - b.x, y - b.y) < 46) 转向(b.字);
+  if (状态 === "输了" && Math.abs(x - 再来按钮.x) < 再来按钮.宽 / 2 && Math.abs(y - 再来按钮.y) < 再来按钮.高 / 2) 开始();
+});
+
+// ===== 画画的小工具 =====
+function 说一句(文字) { 话 = 文字; 话的寿命 = 150; }
+function 飘字(文字, 行, 列, 颜色) { 飘字们.push({ 文字, x: 地图X + 列 * 格子大小 + 格子大小 / 2, y: 地图Y + 行 * 格子大小, 颜色, 寿命: 40 }); }
+function 圆角矩形(x, y, w, h, r) {
+  ctx.beginPath(); ctx.moveTo(x + r, y); ctx.arcTo(x + w, y, x + w, y + h, r); ctx.arcTo(x + w, y + h, x, y + h, r);
+  ctx.arcTo(x, y + h, x, y, r); ctx.arcTo(x, y, x + w, y, r); ctx.closePath(); ctx.fill();
+}
+function 画表情(文字, x, y, 大小) {
+  ctx.font = 大小 + 'px "Apple Color Emoji","Segoe UI Emoji","Noto Color Emoji",sans-serif';
+  ctx.fillStyle = "#000"; ctx.textAlign = "center"; ctx.textBaseline = "middle"; ctx.fillText(文字, x, y);
+}
+function 画文字(文字, x, y, 大小, 颜色) {
+  ctx.fillStyle = 颜色; ctx.font = "bold " + 大小 + 'px "PingFang SC","Microsoft YaHei",sans-serif';
+  ctx.textAlign = "center"; ctx.textBaseline = "middle"; ctx.fillText(文字, x, y);
+}
+
+// 每一帧都会运行一次
+function 游戏循环() {
+  帧数++;
+  if (状态 === "玩" && 帧数 % 走一格的间隔() === 0) 走一步();
+
+  // 地图
+  ctx.fillStyle = "#FFF7EC"; ctx.fillRect(0, 0, W, H);
+  ctx.fillStyle = 设置.背景颜色; 圆角矩形(地图X - 6, 地图Y - 6, 格子大小 * 设置.格子数 + 12, 格子大小 * 设置.格子数 + 12, 14);
+  ctx.strokeStyle = "rgba(30,42,74,0.08)"; ctx.lineWidth = 2;
+  for (let i = 1; i < 设置.格子数; i++) {
+    ctx.beginPath(); ctx.moveTo(地图X + i * 格子大小, 地图Y); ctx.lineTo(地图X + i * 格子大小, 地图Y + 设置.格子数 * 格子大小); ctx.stroke();
+    ctx.beginPath(); ctx.moveTo(地图X, 地图Y + i * 格子大小); ctx.lineTo(地图X + 设置.格子数 * 格子大小, 地图Y + i * 格子大小); ctx.stroke();
+  }
+
+  // 食物
+  if (食物) 画表情(食物.东西.图案, 地图X + 食物.列 * 格子大小 + 格子大小 / 2, 地图Y + 食物.行 * 格子大小 + 格子大小 / 2, 格子大小 * 0.8);
+
+  // 蛇：从尾巴画到头，头上戴一顶小帽子
+  for (let i = 蛇身.length - 1; i >= 0; i--) {
+    const 节 = 蛇身[i], x = 地图X + 节.列 * 格子大小, y = 地图Y + 节.行 * 格子大小;
+    ctx.fillStyle = i === 0 ? "#1E2A4A" : 设置.蛇的颜色;
+    圆角矩形(x + 3, y + 3, 格子大小 - 6, 格子大小 - 6, 12);
+    if (i === 0) {
+      ctx.fillStyle = "#5BE0FF";
+      ctx.beginPath(); ctx.arc(x + 格子大小 * 0.35, y + 格子大小 * 0.45, 5, 0, Math.PI * 2); ctx.arc(x + 格子大小 * 0.65, y + 格子大小 * 0.45, 5, 0, Math.PI * 2); ctx.fill();
+      ctx.fillStyle = "#FFC93D";
+      ctx.beginPath(); ctx.moveTo(x + 格子大小 * 0.3, y + 6); ctx.lineTo(x + 格子大小 * 0.5, y - 12); ctx.lineTo(x + 格子大小 * 0.7, y + 6); ctx.closePath(); ctx.fill();
+    }
+  }
+
+  // 飘字
+  for (const 字 of 飘字们) {
+    ctx.globalAlpha = 字.寿命 / 40; 画文字(字.文字, 字.x, 字.y, 30, 字.颜色); 字.y -= 1.2; 字.寿命--; ctx.globalAlpha = 1;
+  }
+  飘字们 = 飘字们.filter(字 => 字.寿命 > 0);
+
+  // 右边：分数、蛇有几格长、箭头
+  画文字("分数 " + 分数, 760, 50, 34, "#1E2A4A");
+  画文字("蛇有 " + 蛇身.length + " 格长", 760, 100, 26, "#5B6683");
+  for (const b of 按钮们) {
+    ctx.fillStyle = "#FFFFFF"; ctx.beginPath(); ctx.arc(b.x, b.y, 44, 0, Math.PI * 2); ctx.fill();
+    ctx.strokeStyle = "#E2CDA8"; ctx.lineWidth = 4; ctx.stroke();
+    画文字(b.字, b.x, b.y, 30, "#FF8A3D");
+  }
+  if (状态 === "输了") {
+    ctx.fillStyle = "#FF8A3D"; 圆角矩形(再来按钮.x - 再来按钮.宽 / 2, 再来按钮.y - 再来按钮.高 / 2, 再来按钮.宽, 再来按钮.高, 20);
+    画文字("再来一局", 再来按钮.x, 再来按钮.y, 28, "#FFFFFF");
+  }
+
+  // 一句提示
+  if (话的寿命 > 0) {
+    话的寿命--;
+    ctx.globalAlpha = Math.min(1, 话的寿命 / 30);
+    ctx.fillStyle = "rgba(255,255,255,0.92)"; 圆角矩形(地图X + 40, 地图Y + 20, 格子大小 * 设置.格子数 - 80, 56, 18);
+    画文字(话, 地图X + 格子大小 * 设置.格子数 / 2, 地图Y + 48, 26, "#1E2A4A");
+    ctx.globalAlpha = 1;
+  }
+
+  requestAnimationFrame(游戏循环);
+}
+开始();
+游戏循环();
+</script>
+</body>
+</html>

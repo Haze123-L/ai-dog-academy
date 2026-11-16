@@ -1,0 +1,43 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, user-scalable=no">
+<title>我的新游戏</title>
+<style>
+  html, body { margin: 0; height: 100%; background: #FFF7EC; font-family: "PingFang SC", "Microsoft YaHei", sans-serif; color: #1E2A4A; touch-action: manipulation; }
+  #box { height: 100%; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 10px; }
+  h1 { margin: 0; font-size: 28px; }
+  canvas { width: min(96vw, 160vh); max-height: 82vh; aspect-ratio: 16 / 9; border-radius: 18px; box-shadow: 0 6px 0 #F0E2CC; background: #FFFFFF; }
+  p { margin: 0; color: #5B6683; font-size: 18px; }
+</style>
+</head>
+<body>
+<div id="box">
+  <h1>我的新游戏</h1>
+  <canvas id="game" width="960" height="540"></canvas>
+  <p>这里还什么都没有</p>
+</div>
+<script>
+// ===== 这是一个空白游戏 =====
+// 告诉代码精灵你想做什么游戏：叫什么名字、怎么玩、怎么得分、什么时候结束。
+const canvas = document.getElementById("game");
+const ctx = canvas.getContext("2d");
+const W = canvas.width, H = canvas.height;
+let 帧数 = 0;
+function 游戏循环() {
+  帧数++;
+  ctx.fillStyle = "#FFFFFF"; ctx.fillRect(0, 0, W, H);
+  ctx.fillStyle = "#1E2A4A"; ctx.textAlign = "center"; ctx.textBaseline = "middle";
+  ctx.font = 'bold 44px "PingFang SC","Microsoft YaHei",sans-serif';
+  ctx.fillText("说出你想做的游戏", W / 2, H / 2 - 30);
+  ctx.font = '28px "PingFang SC","Microsoft YaHei",sans-serif'; ctx.fillStyle = "#5B6683";
+  ctx.fillText("代码精灵会帮你做出来", W / 2, H / 2 + 30);
+  ctx.font = '60px "Apple Color Emoji","Segoe UI Emoji","Noto Color Emoji",sans-serif';
+  ctx.fillText("✨", W / 2 + Math.sin(帧数 / 20) * 200, H / 2 + 120);
+  requestAnimationFrame(游戏循环);
+}
+游戏循环();
+</script>
+</body>
+</html>

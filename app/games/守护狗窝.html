@@ -1,0 +1,504 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, user-scalable=no">
+<title>守护狗窝</title>
+<style>
+  html, body { margin: 0; height: 100%; background: #FFF7EC; font-family: "PingFang SC", "Microsoft YaHei", sans-serif; color: #1E2A4A; touch-action: none; }
+  #box { height: 100%; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 10px; }
+  h1 { margin: 0; font-size: 28px; }
+  canvas { width: min(96vw, 160vh); max-height: 82vh; aspect-ratio: 16 / 9; border-radius: 18px; box-shadow: 0 6px 0 #F0E2CC; background: #FFF7EC; }
+  p { margin: 0; color: #5B6683; font-size: 18px; }
+</style>
+</head>
+<body>
+<div id="box">
+  <h1>守护狗窝</h1>
+  <canvas id="game" width="960" height="540"></canvas>
+  <p>怪物要来抢比特的狗窝！点怪物一下就打它一下，血打光它就倒</p>
+</div>
+
+<script>
+// ===== 游戏设置：想改游戏，先改这里 =====
+const 设置 = {
+  狗窝有几颗心: 3,         // 怪物走进狗窝就少一颗心，心没了就输
+  每波之间休息几秒: 3,     // 打完一波，歇几秒再来下一波
+  每只怪间隔几秒: 1.2,     // 同一波里，隔几秒出来一只怪
+  显示血条: true,          // 改成 false：怪物头上不画血条
+  怪物大小: 64,            // 怪物的图案画多大
+  背景颜色: "#CFEFD8",     // 草地的颜色
+};
+
+// ===== 怪物表：每一行是一种怪 =====
+// 名字：怪物叫什么（波次表里就写这个名字）
+// 图案：一个 emoji
+// 血量：要打几下才倒
+// 速度："慢"（大约 12 秒走到狗窝）、"中"、"快"（大约 5 秒）；也可以写数字：每帧走几像素
+// 打倒得几分：打倒它加几分
+const 怪物们 = [
+  { 名字: "小怪兽", 图案: "👾", 血量: 2, 速度: "慢", 打倒得几分: 1 },
+];
+
+// ===== 波次表：每一行是一波，从上往下一波一波来 =====
+// 第几波：这是第几波
+// 出场：写"名字×几只"，几种怪用"、"隔开，比如 "小怪兽×3、大块头×1"（几种怪会轮流出来）
+// 波次表空着：怪物表里的怪会一直来，没有尽头
+const 波次们 = [
+  { 第几波: 1, 出场: "小怪兽×5" },
+  { 第几波: 2, 出场: "小怪兽×8" },
+  { 第几波: 3, 出场: "小怪兽×12" },
+];
+
+// ===== 下面是游戏程序 =====
+const canvas = document.getElementById("game");
+const ctx = canvas.getContext("2d");
+const W = canvas.width, H = canvas.height;
+const 草地 = { 左: 20, 上: 58, 右: 940, 下: 382 };    // 三条路所在的草地
+const 路高 = (草地.下 - 草地.上) / 3;                   // 每条路有多高
+const 草地中间 = (草地.上 + 草地.下) / 2;
+const 狗窝线 = 170;                                       // 怪物走到这里，就进狗窝了
+const 出生X = W + 24;                                     // 怪物从右边外面走进来
+const 速度表 = { 慢: 1.2, 中: 1.8, 快: 2.8 };            // 每帧走几像素：慢的大约 12 秒走到狗窝，快的大约 5 秒
+const 再来按钮 = { x: W / 2, y: 330, 宽: 240, 高: 68 };
+
+let 怪物图鉴 = [];        // 照怪物表整理好的每种怪（漏填、填错的地方用了默认值）
+let 出场的名字 = [];      // 波次表里写到的怪物名字
+let 场上的怪 = [];        // 正在走的怪：{ 种类, x, y, 路, 血, 满血, 速度, 挨打 }
+let 出怪队列 = [];        // 这一波还没出来的怪，排着队
+let 第几波 = 0;
+let 一共几波 = 0;          // 0：波次表是空的，怪会一直来
+let 阶段 = "休息";        // "休息"：两波中间；"出怪"：这一波正在来；"没有怪"：怪物表是空的
+let 计时 = 0;             // 休息还剩几帧，或者下一只怪还要等几帧
+let 心 = 3;
+let 分数 = 0;
+let 打倒几只 = 0;
+let 状态 = "玩";          // "玩"、"输了"、"赢了"
+let 帧数 = 0;
+let 话 = "", 话的寿命 = 0;       // 屏幕上的一句提示
+let 大字 = "", 大字的寿命 = 0;   // "第 2 波来了！"
+let 飘字们 = [];
+let 爆炸们 = [];
+let 狗窝晃 = 0, 比特叫 = 0;
+let 上一条路 = -1;
+let 毛病们 = [];          // 怪物表里看不懂的地方
+
+// "12" "三" "十二" 变成数字；看不懂就是 NaN
+function 读数(字) {
+  字 = String(字 == null ? "" : 字).trim();
+  if (/^\d+(\.\d+)?$/.test(字)) return Number(字);
+  const 中文 = "零一二三四五六七八九";
+  字 = 字.replace(/两/g, "二");
+  if (/^[零一二三四五六七八九]$/.test(字)) return 中文.indexOf(字);
+  const m = 字.match(/^([一二三四五六七八九]?)十([一二三四五六七八九]?)$/);
+  if (m) return (m[1] ? 中文.indexOf(m[1]) : 1) * 10 + (m[2] ? 中文.indexOf(m[2]) : 0);
+  return NaN;
+}
+
+// 把怪物表里的一行整理好：漏填、填错的地方用默认值
+function 整理一种怪(行, 第几个) {
+  const 名字 = 行.名字 == null || String(行.名字).trim() === "" ? "怪物" + (第几个 + 1) : String(行.名字).trim();
+  const 图案 = typeof 行.图案 === "string" && 行.图案.trim() ? 行.图案.trim() : "👾";
+  const 血量 = Math.min(99, Math.max(1, Math.round(读数(行.血量)) || 1));
+  let 速度 = 速度表.中, 速度名 = "中";
+  if (行.速度 === "慢" || 行.速度 === "中" || 行.速度 === "快") { 速度 = 速度表[行.速度]; 速度名 = 行.速度; }
+  else if (读数(行.速度) > 0) { 速度 = Math.min(10, Math.max(0.2, 读数(行.速度))); 速度名 = String(速度); }
+  else if (行.速度 != null && 行.速度 !== "") 毛病们.push(名字 + "的速度「" + 行.速度 + "」看不懂，当成「中」");
+  const 分 = 行.打倒得几分 == null || 行.打倒得几分 === "" ? 1 : 读数(行.打倒得几分);
+  return { 名字, 图案, 血量, 速度, 速度名, 分: 分 >= 0 ? Math.min(999, Math.round(分)) : 1 };
+}
+
+// 把 "小怪兽×3、大块头×1" 拆成 [{ 名字: "小怪兽", 几只: 3 }, { 名字: "大块头", 几只: 1 }]
+function 拆出场(出场) {
+  const 结果 = [];
+  for (const 段 of String(出场 == null ? "" : 出场).split(/[、，,+＋;；\n]/)) {
+    const 字 = 段.trim();
+    if (!字) continue;
+    const m = 字.match(/^(.*?)\s*[×xX*＊]\s*(\d+|[零一两二三四五六七八九十]+)\s*[只个]?$/) || 字.match(/^(.*?)\s*(\d+|[零一两二三四五六七八九十]+)\s*[只个]$/);
+    const 几只 = m ? 读数(m[2]) : 1;
+    结果.push({ 名字: (m ? m[1] : 字).trim(), 几只: Math.min(50, Math.max(0, Math.round(几只) || 0)) });
+  }
+  return 结果;
+}
+
+// 一波里的怪排好队：几种怪轮流出来
+function 排队(出场) {
+  const 每种 = [];
+  for (const 一段 of 拆出场(出场)) {
+    const 种类 = 怪物图鉴.find(怪 => 怪.名字 === 一段.名字);
+    if (种类) 每种.push({ 种类, 剩: 一段.几只 });
+    else 说一句("没有叫「" + 一段.名字 + "」的怪物");
+  }
+  const 队 = [];
+  while (每种.some(一种 => 一种.剩 > 0)) {
+    for (const 一种 of 每种) if (一种.剩 > 0) { 队.push(一种.种类); 一种.剩--; }
+  }
+  return 队;
+}
+
+function 满心() { return Math.min(99, Math.max(1, Math.round(Number(设置.狗窝有几颗心)) || 3)); }
+function 秒变帧(秒, 默认) { const n = Number(秒); return Number.isFinite(n) && n >= 0 ? Math.round(n * 60) : 默认; }
+function 每只怪的间隔() { return Math.max(6, 秒变帧(设置.每只怪间隔几秒, 72)); }
+function 休息几帧() { return Math.max(30, 秒变帧(设置.每波之间休息几秒, 180)); }
+function 怪物大小() { const n = Number(设置.怪物大小); return n >= 20 && n <= 160 ? n : 64; }
+
+// 开一局新游戏
+function 开始() {
+  毛病们 = [];
+  const 表 = Array.isArray(怪物们) ? 怪物们 : [];
+  怪物图鉴 = 表.filter(行 => 行 && typeof 行 === "object").map(整理一种怪);
+  const 波表 = Array.isArray(波次们) ? 波次们 : [];
+  一共几波 = 波表.length;
+  出场的名字 = [];
+  for (const 一波 of 波表) for (const 一段 of 拆出场(一波 && 一波.出场)) 出场的名字.push(一段.名字);
+  场上的怪 = []; 出怪队列 = []; 飘字们 = []; 爆炸们 = [];
+  第几波 = 0; 分数 = 0; 打倒几只 = 0; 状态 = "玩"; 心 = 满心();
+  大字的寿命 = 0; 话的寿命 = 0; 狗窝晃 = 0;
+  if (!怪物图鉴.length) { 阶段 = "没有怪"; 说一句("怪物表是空的"); return; }
+  阶段 = "休息"; 计时 = 40;
+  if (毛病们.length) 说一句(毛病们[0]);
+}
+
+// 下一波开始
+function 下一波() {
+  第几波++;
+  if (一共几波) 出怪队列 = 排队((波次们[第几波 - 1] || {}).出场);
+  else {   // 波次表是空的：怪物表里的怪一直来，一波比一波多
+    出怪队列 = [];
+    const 每种几只 = 1 + Math.ceil(第几波 / 2);
+    for (let i = 0; i < 每种几只; i++) for (const 种类 of 怪物图鉴) 出怪队列.push(种类);
+    出怪队列 = 出怪队列.slice(0, 60);
+  }
+  阶段 = "出怪"; 计时 = 50;
+  大字 = "第 " + 第几波 + " 波来了！"; 大字的寿命 = 100;
+}
+
+// 这一波的怪都出完了、也都打倒了
+function 这一波打完了() {
+  if (一共几波 && 第几波 >= 一共几波) return 赢了();
+  阶段 = "休息"; 计时 = 休息几帧();
+  说一句("第 " + 第几波 + " 波守住了！歇一会儿");
+}
+
+// 一只怪从右边出来，挑一条路
+function 出一只怪(种类) {
+  let 路 = Math.floor(Math.random() * 3);
+  if (路 === 上一条路) 路 = (路 + 1 + Math.floor(Math.random() * 2)) % 3;
+  上一条路 = 路;
+  场上的怪.push({ 种类, x: 出生X, y: 草地.上 + 路高 * (路 + 0.5), 路, 血: 种类.血量, 满血: 种类.血量, 速度: 种类.速度, 挨打: 0, 晃: Math.random() * 6 });
+}
+
+// 怪物走进狗窝：少一颗心
+function 进狗窝(怪) {
+  怪.走了 = true;
+  心 = Math.max(0, 心 - 1); 狗窝晃 = 24;
+  飘字("-1", 狗窝线 - 30, 怪.y - 30, "#E5484D");
+  if (心 <= 0) 输了();
+}
+
+// 点到怪物：打它一下
+function 打一下(怪) {
+  怪.血--; 怪.挨打 = 8; 怪.x += 6; 比特叫 = 14;
+  if (怪.血 <= 0) 打倒(怪);
+}
+function 打倒(怪) {
+  怪.走了 = true;
+  场上的怪 = 场上的怪.filter(别的 => 别的 !== 怪);
+  分数 += 怪.种类.分; 打倒几只++;
+  爆炸们.push({ x: 怪.x, y: 怪.y, 寿命: 18 });
+  飘字("+" + 怪.种类.分, 怪.x, 怪.y - 44, "#18A87C");
+}
+function 输了() { 状态 = "输了"; }
+function 赢了() { 状态 = "赢了"; 阶段 = "休息"; }
+
+// 每帧：出怪、走路、进狗窝
+function 更新() {
+  if (狗窝晃 > 0) 狗窝晃--;
+  if (比特叫 > 0) 比特叫--;
+  if (状态 !== "玩") return;
+  if (阶段 === "休息") { 计时--; if (计时 <= 0) 下一波(); }
+  else if (阶段 === "出怪") {
+    if (出怪队列.length) {
+      计时--;
+      if (计时 <= 0) { 出一只怪(出怪队列.shift()); 计时 = 每只怪的间隔(); }
+    } else if (!场上的怪.length) 这一波打完了();
+  }
+  for (const 怪 of 场上的怪) {
+    怪.x -= 怪.速度;
+    if (怪.挨打 > 0) 怪.挨打--;
+    if (怪.x <= 狗窝线) 进狗窝(怪);
+    if (状态 !== "玩") break;
+  }
+  场上的怪 = 场上的怪.filter(怪 => !怪.走了);
+}
+
+// ===== 操作：点怪物打它；输了、赢了点「再来一局」 =====
+function 点了(x, y) {
+  if (状态 !== "玩") {
+    if (Math.abs(x - 再来按钮.x) < 再来按钮.宽 / 2 && Math.abs(y - 再来按钮.y) < 再来按钮.高 / 2) 开始();
+    return;
+  }
+  let 打中 = null, 最近 = Math.max(40, 怪物大小() * 0.75);
+  for (const 怪 of 场上的怪) {
+    const 远 = Math.hypot(x - 怪.x, y - 怪.y);
+    if (远 < 最近) { 打中 = 怪; 最近 = 远; }
+  }
+  if (打中) 打一下(打中);
+}
+canvas.addEventListener("pointerdown", e => {
+  const r = canvas.getBoundingClientRect();
+  const x = (e.clientX - r.left) / r.width * W, y = (e.clientY - r.top) / r.height * H;
+  点了(x, y);
+});
+document.addEventListener("keydown", e => {
+  if ((e.key === "Enter" || e.key === " ") && 状态 !== "玩") { 开始(); e.preventDefault(); }
+});
+
+// ===== 画画的小工具 =====
+function 说一句(文字) { 话 = 文字; 话的寿命 = 150; }
+function 飘字(文字, x, y, 颜色) { 飘字们.push({ 文字, x, y, 颜色, 寿命: 40 }); }
+function 圆角矩形(x, y, w, h, r) {
+  r = Math.min(r, w / 2, h / 2);
+  ctx.beginPath(); ctx.moveTo(x + r, y); ctx.arcTo(x + w, y, x + w, y + h, r); ctx.arcTo(x + w, y + h, x, y + h, r);
+  ctx.arcTo(x, y + h, x, y, r); ctx.arcTo(x, y, x + w, y, r); ctx.closePath(); ctx.fill();
+}
+function 画表情(文字, x, y, 大小) {
+  ctx.font = 大小 + 'px "Apple Color Emoji","Segoe UI Emoji","Noto Color Emoji",sans-serif';
+  ctx.fillStyle = "#000"; ctx.textAlign = "center"; ctx.textBaseline = "middle"; ctx.fillText(文字, x, y);
+}
+function 画文字(文字, x, y, 大小, 颜色) {
+  ctx.fillStyle = 颜色; ctx.font = "bold " + 大小 + 'px "PingFang SC","Microsoft YaHei",sans-serif';
+  ctx.textAlign = "center"; ctx.textBaseline = "middle"; ctx.fillText(文字, x, y);
+}
+// 小字：可以靠左、靠右，太长会挤一挤
+function 画小字(文字, x, y, 大小, 颜色, 对齐, 最宽, 粗) {
+  ctx.fillStyle = 颜色; ctx.font = (粗 ? "bold " : "") + 大小 + 'px "PingFang SC","Microsoft YaHei",sans-serif';
+  ctx.textAlign = 对齐 || "center"; ctx.textBaseline = "middle";
+  if (最宽) ctx.fillText(文字, x, y, 最宽); else ctx.fillText(文字, x, y);
+}
+
+// 比特：一只机器小狗，头上有根小天线
+function 画比特形象(x, y, 大小) {
+  const s = 大小 / 100;
+  ctx.save(); ctx.translate(x, y); ctx.scale(s, s);
+  // 影子
+  ctx.fillStyle = "rgba(36,48,94,.16)"; ctx.beginPath(); ctx.ellipse(0, 54, 40, 6, 0, 0, Math.PI * 2); ctx.fill();
+  // 后腿
+  ctx.fillStyle = "#F4F6FA"; ctx.strokeStyle = "#C5CCD8"; ctx.lineWidth = 1.5;
+  [[-28, 20], [28, 20]].forEach(([lx, ly]) => { 圆角矩形(lx - 8, ly, 16, 26, 8); });
+  ctx.fillStyle = "#FF8A3D";
+  [[-28, 42], [28, 42]].forEach(([lx, ly]) => { 圆角矩形(lx - 10, ly, 20, 12, 5); });
+  // 尾巴
+  ctx.strokeStyle = "#FF8A3D"; ctx.lineWidth = 9; ctx.lineCap = "round";
+  ctx.beginPath(); ctx.moveTo(26, 8); ctx.quadraticCurveTo(44, 14, 40, 30); ctx.stroke();
+  // 身体
+  ctx.fillStyle = "#F4F6FA"; 圆角矩形(-34, -18, 68, 56, 22);
+  ctx.strokeStyle = "#C5CCD8"; ctx.lineWidth = 2; ctx.beginPath();
+  (function(x,y,w,h,r){ctx.moveTo(x+r,y);ctx.arcTo(x+w,y,x+w,y+h,r);ctx.arcTo(x+w,y+h,x,y+h,r);ctx.arcTo(x,y+h,x,y,r);ctx.arcTo(x,y,x+w,y,r);ctx.closePath();})(-34,-18,68,56,22); ctx.stroke();
+  // 橙心 </>
+  ctx.fillStyle = "#FF8A3D";
+  ctx.beginPath();
+  ctx.moveTo(0, 22); ctx.bezierCurveTo(-18, 8, -26, -4, -16, -12); ctx.bezierCurveTo(-10, -16, -4, -12, 0, -6);
+  ctx.bezierCurveTo(4, -12, 10, -16, 16, -12); ctx.bezierCurveTo(26, -4, 18, 8, 0, 22);
+  ctx.fill();
+  ctx.strokeStyle = "#fff"; ctx.lineWidth = 2.4; ctx.lineCap = "round"; ctx.lineJoin = "round";
+  ctx.beginPath(); ctx.moveTo(-9, -14); ctx.lineTo(-15, -8); ctx.lineTo(-9, -2); ctx.stroke();
+  ctx.beginPath(); ctx.moveTo(-2.5, -14); ctx.lineTo(2.5, -2); ctx.stroke();
+  ctx.beginPath(); ctx.moveTo(9, -14); ctx.lineTo(15, -8); ctx.lineTo(9, -2); ctx.stroke();
+  // 前腿
+  ctx.fillStyle = "#F4F6FA";
+  [[-16, 24], [16, 24]].forEach(([lx, ly]) => { 圆角矩形(lx - 7, ly, 14, 24, 7); });
+  ctx.fillStyle = "#FF8A3D";
+  [[-16, 44], [16, 44]].forEach(([lx, ly]) => { 圆角矩形(lx - 9, ly, 18, 11, 5); });
+  // 垂耳：从头两侧下垂的胶囊耳（正旋转=下垂；负旋转会变成翅耳）
+  ctx.fillStyle = "#FF8A3D";
+  ctx.beginPath(); ctx.ellipse(-48, -48, 13, 30, 0.35, 0, Math.PI * 2); ctx.fill();
+  ctx.beginPath(); ctx.ellipse(48, -48, 13, 30, -0.35, 0, Math.PI * 2); ctx.fill();
+  ctx.fillStyle = "#FFC08A";
+  ctx.beginPath(); ctx.ellipse(-48, -46, 6, 18, 0.35, 0, Math.PI * 2); ctx.fill();
+  ctx.beginPath(); ctx.ellipse(48, -46, 6, 18, -0.35, 0, Math.PI * 2); ctx.fill();
+  // 头
+  ctx.fillStyle = "#F4F6FA"; 圆角矩形(-40, -88, 80, 72, 30);
+  ctx.strokeStyle = "#C5CCD8"; ctx.lineWidth = 2; ctx.beginPath();
+  (function(x,y,w,h,r){ctx.moveTo(x+r,y);ctx.arcTo(x+w,y,x+w,y+h,r);ctx.arcTo(x+w,y+h,x,y+h,r);ctx.arcTo(x,y+h,x,y,r);ctx.arcTo(x,y,x+w,y,r);ctx.closePath();})(-40,-88,80,72,30); ctx.stroke();
+  ctx.fillStyle = "rgba(255,255,255,.55)"; ctx.beginPath(); ctx.ellipse(-14, -70, 16, 8, -0.3, 0, Math.PI * 2); ctx.fill();
+  // 黑面罩
+  ctx.fillStyle = "#141820"; ctx.beginPath(); ctx.ellipse(0, -52, 28, 22, 0, 0, Math.PI * 2); ctx.fill();
+  // 四角星星眼 ✦
+  ctx.fillStyle = "#5BE0FF";
+  for (const [ex, ey] of [[-12, -54], [12, -54]]) {
+    ctx.beginPath();
+    const outer = 9, inner = 9 * 0.38;
+    for (let i = 0; i < 8; i++) {
+      const a = -Math.PI / 2 + i * Math.PI / 4;
+      const rad = i % 2 === 0 ? outer : inner;
+      const x = ex + Math.cos(a) * rad, y = ey + Math.sin(a) * rad;
+      if (i === 0) ctx.moveTo(x, y); else ctx.lineTo(x, y);
+    }
+    ctx.closePath(); ctx.fill();
+  }
+  // 像素小嘴
+  [[-5, -40], [-1, -38], [3, -40]].forEach(([mx, my]) => { 圆角矩形(mx, my, 2.6, 2.2, 0.4); });
+  // 天线：橙底座 + 白杆 + 白球
+  ctx.fillStyle = "#FF8A3D"; ctx.beginPath(); ctx.ellipse(0, -88, 7, 4, 0, 0, Math.PI * 2); ctx.fill();
+  ctx.strokeStyle = "#F2F4F8"; ctx.lineWidth = 4; ctx.lineCap = "round";
+  ctx.beginPath(); ctx.moveTo(0, -88); ctx.lineTo(0, -104); ctx.stroke();
+  ctx.fillStyle = "#FFFFFF"; ctx.strokeStyle = "#D0D6E2"; ctx.lineWidth = 1;
+  ctx.beginPath(); ctx.arc(0, -106, 5.5, 0, Math.PI * 2); ctx.fill(); ctx.stroke();
+  ctx.restore();
+}
+
+function 画比特(x, y) {
+  const 跳 = 比特叫 > 0 ? -Math.sin(比特叫 / 14 * Math.PI) * 10 : Math.sin(帧数 / 12) * 2;
+  画比特形象(x, y + 跳, 54);
+  if (比特叫 > 0) 画文字("汪！", x + 44, y + 跳 - 36, 22, "#FF8A3D");
+}
+
+function 画顶栏() {
+  const 波字 = 阶段 === "没有怪" ? "还没有怪" : 一共几波 ? "第 " + Math.max(1, 第几波) + " 波 / 共 " + 一共几波 + " 波" : "第 " + Math.max(1, 第几波) + " 波（没有尽头）";
+  画文字(波字, 160, 30, 26, "#1E2A4A");
+  const 满 = 满心();
+  if (满 <= 10) for (let i = 0; i < 满; i++) 画表情(i < 心 ? "❤️" : "🤍", W / 2 - (满 - 1) * 19 + i * 38, 30, 28);
+  else { 画表情("❤️", W / 2 - 30, 30, 28); 画文字("× " + 心, W / 2 + 22, 30, 26, "#E5484D"); }
+  画文字("分数 " + 分数, 830, 30, 28, "#1E2A4A");
+}
+
+function 画草地() {
+  ctx.fillStyle = 设置.背景颜色; 圆角矩形(草地.左, 草地.上, 草地.右 - 草地.左, 草地.下 - 草地.上, 18);
+  ctx.fillStyle = "rgba(255,255,255,0.2)"; ctx.fillRect(狗窝线, 草地.上 + 路高, 草地.右 - 狗窝线 - 6, 路高);
+  ctx.strokeStyle = "rgba(30,42,74,0.12)"; ctx.lineWidth = 3; ctx.setLineDash([16, 14]);
+  for (let i = 1; i < 3; i++) { ctx.beginPath(); ctx.moveTo(狗窝线, 草地.上 + 路高 * i); ctx.lineTo(草地.右 - 10, 草地.上 + 路高 * i); ctx.stroke(); }
+  ctx.setLineDash([]);
+  // 狗窝这一块和篱笆
+  ctx.fillStyle = "rgba(255,247,236,0.6)"; 圆角矩形(草地.左 + 8, 草地.上 + 8, 狗窝线 - 草地.左 - 16, 草地.下 - 草地.上 - 16, 14);
+  ctx.strokeStyle = "#C9A27A"; ctx.lineWidth = 6; ctx.lineCap = "round";
+  for (let y = 草地.上 + 14; y < 草地.下 - 14; y += 26) { ctx.beginPath(); ctx.moveTo(狗窝线, y); ctx.lineTo(狗窝线, y + 12); ctx.stroke(); }
+  ctx.lineCap = "butt";
+  const 晃 = 狗窝晃 > 0 ? Math.sin(狗窝晃 * 1.3) * 6 : 0;
+  if (狗窝晃 > 0) { ctx.fillStyle = "rgba(229,72,77," + (狗窝晃 / 60) + ")"; 圆角矩形(草地.左 + 8, 草地.上 + 8, 狗窝线 - 草地.左 - 16, 草地.下 - 草地.上 - 16, 14); }
+  画表情("🏠", 92 + 晃, 草地中间 - 34, 100);
+  画比特(96, 草地中间 + 86);
+}
+
+function 画一只怪(怪) {
+  const 大小 = 怪物大小();
+  const y = 怪.y + Math.sin(帧数 / 6 + 怪.晃) * 3;
+  ctx.fillStyle = "rgba(30,42,74,0.13)"; ctx.beginPath(); ctx.ellipse(怪.x, 怪.y + 大小 * 0.42, 大小 * 0.36, 大小 * 0.1, 0, 0, Math.PI * 2); ctx.fill();
+  if (怪.挨打 > 0) { ctx.fillStyle = "rgba(255,255,255,0.8)"; ctx.beginPath(); ctx.arc(怪.x, y, 大小 * 0.56, 0, Math.PI * 2); ctx.fill(); }
+  画表情(怪.种类.图案, 怪.x, y, 怪.挨打 > 0 ? 大小 * 1.12 : 大小);
+  if (设置.显示血条) {
+    const 宽 = 56, 比例 = Math.max(0, 怪.血 / 怪.满血), 左 = 怪.x - 宽 / 2, 上 = 怪.y - 大小 / 2 - 16;
+    ctx.fillStyle = "#FFFFFF"; 圆角矩形(左 - 3, 上 - 3, 宽 + 6, 14, 7);
+    ctx.fillStyle = 比例 > 0.5 ? "#2ECC71" : 比例 > 0.25 ? "#FFC93D" : "#E5484D";
+    圆角矩形(左, 上, Math.max(8, 宽 * 比例), 8, 4);
+  }
+}
+
+// 底下的怪物图鉴：照着怪物表一种一种画出来
+function 画图鉴() {
+  const 左 = 20, 上 = 392, 宽 = 920, 高 = 142;
+  ctx.fillStyle = "#F0E2CC"; 圆角矩形(左 - 3, 上 - 3, 宽 + 6, 高 + 6, 18);
+  ctx.fillStyle = "#FFFFFF"; 圆角矩形(左, 上, 宽, 高, 16);
+  画小字("怪物图鉴", 左 + 16, 上 + 16, 17, "#1E2A4A", "left", 0, true);
+  画小字("照怪物表画的：改了表，这里就跟着变", 左 + 宽 - 16, 上 + 16, 14, "#9AA3B8", "right");
+  const n = 怪物图鉴.length;
+  if (!n) { 画文字("怪物表是空的：在怪物表里填一行试试", W / 2, 上 + 80, 22, "#5B6683"); return; }
+  const 画几种 = n > 16 ? 15 : n, 还有 = n - 画几种, 格数 = 画几种 + (还有 ? 1 : 0);
+  const 区左 = 32, 区宽 = 896, 区上 = 上 + 32;
+  if (格数 <= 6) {
+    const 卡宽 = Math.min(170, (区宽 - (格数 - 1) * 10) / 格数), 卡高 = 104;
+    const 起点 = W / 2 - (格数 * 卡宽 + (格数 - 1) * 10) / 2;
+    for (let i = 0; i < 格数; i++) 画一张卡(i < 画几种 ? 怪物图鉴[i] : null, 起点 + i * (卡宽 + 10), 区上, 卡宽, 卡高, 还有, false);
+  } else {
+    const 每行 = Math.ceil(格数 / 2), 卡宽 = (区宽 - (每行 - 1) * 8) / 每行, 卡高 = 49;
+    for (let i = 0; i < 格数; i++) 画一张卡(i < 画几种 ? 怪物图鉴[i] : null, 区左 + (i % 每行) * (卡宽 + 8), 区上 + Math.floor(i / 每行) * (卡高 + 6), 卡宽, 卡高, 还有, true);
+  }
+}
+function 画一张卡(怪, x, y, 宽, 高, 还有, 小卡) {
+  const 出场 = !怪 || !一共几波 || 出场的名字.includes(怪.名字);
+  ctx.fillStyle = 出场 ? "#FFF7EC" : "#F2F2F2"; 圆角矩形(x, y, 宽, 高, 12);
+  if (!怪) { 画小字("还有 " + 还有 + " 种", x + 宽 / 2, y + 高 / 2, 15, "#5B6683", "center", 宽 - 8, true); return; }
+  ctx.globalAlpha = 出场 ? 1 : 0.5;
+  const 属性 = "血 " + 怪.血量 + " · " + 怪.速度名 + " · " + 怪.分 + " 分";
+  if (小卡) {
+    画表情(怪.图案, x + 24, y + 高 / 2, 28);
+    画小字(怪.名字, x + 46, y + 15, 15, "#1E2A4A", "left", 宽 - 50, true);
+    画小字(属性, x + 46, y + 35, 12, "#5B6683", "left", 宽 - 50);
+  } else {
+    画表情(怪.图案, x + 宽 / 2, y + 26, 38);
+    画小字(怪.名字, x + 宽 / 2, y + 56, 18, "#1E2A4A", "center", 宽 - 10, true);
+    画小字(属性, x + 宽 / 2, y + 79, 14, "#5B6683", "center", 宽 - 10);
+    if (!出场) 画小字("波次表里没有", x + 宽 / 2, y + 95, 12, "#E5484D", "center", 宽 - 10);
+  }
+  ctx.globalAlpha = 1;
+}
+
+function 画结局() {
+  ctx.fillStyle = "rgba(30,42,74,0.35)"; ctx.fillRect(0, 0, W, H);
+  ctx.fillStyle = "#FFF7EC"; 圆角矩形(W / 2 - 240, 116, 480, 268, 26);
+  const 赢 = 状态 === "赢了";
+  画表情(赢 ? "🏆" : "😢", W / 2, 166, 58);
+  画文字(赢 ? "守住了！" : "狗窝被占了", W / 2, 224, 40, 赢 ? "#18A87C" : "#E5484D");
+  画文字(赢 ? "打倒 " + 打倒几只 + " 只怪，得了 " + 分数 + " 分" : "守到了第 " + 第几波 + " 波，得了 " + 分数 + " 分", W / 2, 268, 22, "#5B6683");
+  ctx.fillStyle = "#FF8A3D"; 圆角矩形(再来按钮.x - 再来按钮.宽 / 2, 再来按钮.y - 再来按钮.高 / 2, 再来按钮.宽, 再来按钮.高, 20);
+  画文字("再来一局", 再来按钮.x, 再来按钮.y, 28, "#FFFFFF");
+}
+
+// 每一帧都会运行一次
+function 游戏循环() {
+  帧数++;
+  更新();
+
+  ctx.fillStyle = "#FFF7EC"; ctx.fillRect(0, 0, W, H);
+  画顶栏();
+  画草地();
+
+  // 怪物
+  for (const 怪 of 场上的怪) 画一只怪(怪);
+  for (const 炸 of 爆炸们) { ctx.globalAlpha = 炸.寿命 / 18; 画表情("💥", 炸.x, 炸.y, 70 - 炸.寿命); 炸.寿命--; ctx.globalAlpha = 1; }
+  爆炸们 = 爆炸们.filter(炸 => 炸.寿命 > 0);
+
+  // 飘字
+  for (const 字 of 飘字们) {
+    ctx.globalAlpha = 字.寿命 / 40; 画文字(字.文字, 字.x, 字.y, 30, 字.颜色); 字.y -= 1.2; 字.寿命--; ctx.globalAlpha = 1;
+  }
+  飘字们 = 飘字们.filter(字 => 字.寿命 > 0);
+
+  // 草地中间的大字：第几波来了、休息倒数、怪物表是空的
+  const 中X = (狗窝线 + 草地.右) / 2;
+  if (状态 === "玩" && 阶段 === "休息" && 第几波 > 0) 画文字("第 " + (第几波 + 1) + " 波还有 " + Math.ceil(计时 / 60) + " 秒", 中X, 草地中间, 30, "rgba(30,42,74,0.55)");
+  if (阶段 === "没有怪") {
+    画文字("怪物表是空的", 中X, 草地中间 - 18, 36, "#1E2A4A");
+    画文字("在怪物表里填一行，怪就来了", 中X, 草地中间 + 26, 22, "#5B6683");
+  }
+  if (大字的寿命 > 0) {
+    大字的寿命--;
+    const 放大 = 1 + Math.max(0, 大字的寿命 - 86) / 14 * 0.35;
+    ctx.globalAlpha = Math.min(1, 大字的寿命 / 20);
+    ctx.save(); ctx.translate(中X, 草地中间); ctx.scale(放大, 放大);
+    ctx.fillStyle = "rgba(255,255,255,0.92)"; 圆角矩形(-200, -44, 400, 88, 30);
+    画文字(大字, 0, 0, 46, "#FF8A3D");
+    ctx.restore(); ctx.globalAlpha = 1;
+  }
+
+  画图鉴();
+
+  // 一句提示
+  if (话的寿命 > 0) {
+    话的寿命--;
+    ctx.globalAlpha = Math.min(1, 话的寿命 / 30);
+    const 宽 = Math.min(720, 话.length * 26 + 60);
+    ctx.fillStyle = "rgba(255,255,255,0.94)"; 圆角矩形(中X - 宽 / 2, 草地.上 + 12, 宽, 50, 18);
+    画小字(话, 中X, 草地.上 + 37, 24, "#1E2A4A", "center", 宽 - 24, true);
+    ctx.globalAlpha = 1;
+  }
+
+  if (状态 !== "玩") 画结局();
+
+  requestAnimationFrame(游戏循环);
+}
+开始();
+游戏循环();
+</script>
+</body>
+</html>

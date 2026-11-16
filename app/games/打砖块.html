@@ -1,0 +1,389 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, user-scalable=no">
+<title>打砖块</title>
+<style>
+  html, body { margin: 0; height: 100%; background: #FFF7EC; font-family: "PingFang SC", "Microsoft YaHei", sans-serif; color: #1E2A4A; touch-action: none; }
+  #box { height: 100%; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 10px; }
+  h1 { margin: 0; font-size: 28px; }
+  canvas { width: min(96vw, 160vh); max-height: 82vh; aspect-ratio: 16 / 9; border-radius: 18px; box-shadow: 0 6px 0 #F0E2CC; background: #FFF7EC; }
+  p { margin: 0; color: #5B6683; font-size: 18px; }
+</style>
+</head>
+<body>
+<div id="box">
+  <h1>打砖块</h1>
+  <canvas id="game" width="960" height="540"></canvas>
+  <p>手指按住画面左右拖，挡板跟着走；点一下发球，把砖块全打碎</p>
+</div>
+
+<script>
+// ===== 游戏设置：想改游戏，先改这里 =====
+const 设置 = {
+  球的速度: 6,            // 球每一帧飞多远，数字越大球越快
+  挡板宽度: 160,          // 挡板有多宽
+  有几个球: 3,            // 一局有几个球，用完就输了
+  底下有保护墙: false,     // 改成 true：底下有一道墙，球掉下去能挡住一次
+  背景颜色: "#1E2A4A",    // 场地的颜色
+};
+
+// ===== 砖块种类：每一行是一种砖 =====
+// 记号：在下面「砖块排列」里用的一个字，比如 "红"
+// 颜色：砖的颜色，比如 "#FF5A5F"
+// 打几下才碎：1 就是一碰就碎；要打好几下的砖，没碎时会裂开，还写着剩几下
+// 得几分：打碎了得几分
+// 碎了掉出：""（什么都不掉）、"变长"（挡板变长 10 秒）、"多一个球"、"加一条命"；挡板接到才生效
+const 砖块种类 = [
+  { 记号: "红", 颜色: "#FF5A5F", 打几下才碎: 1, 得几分: 1, 碎了掉出: "" },
+  { 记号: "黄", 颜色: "#FFC93D", 打几下才碎: 1, 得几分: 1, 碎了掉出: "" },
+  { 记号: "绿", 颜色: "#2ECC9A", 打几下才碎: 1, 得几分: 1, 碎了掉出: "" },
+];
+
+// ===== 砖块排列：每一行是一排砖，一个字是一块砖（用上面的记号），"." 是空位 =====
+const 砖块排列 = [
+  "红红红红红红红红红红",
+  "黄黄黄黄黄黄黄黄黄黄",
+  "绿绿绿绿绿绿绿绿绿绿",
+];
+
+// ===== 下面是游戏程序 =====
+const canvas = document.getElementById("game");
+const ctx = canvas.getContext("2d");
+const W = canvas.width, H = canvas.height;
+const 场地 = { 左: 16, 上: 64, 右: W - 16, 下: H - 12 };   // 球能飞的地方
+const 球半径 = 10;
+const 挡板Y = 场地.下 - 44, 挡板高 = 20;   // 挡板上沿在哪、有多厚
+const 保护墙Y = 场地.下 - 10;
+const 认识的掉落 = ["", "变长", "多一个球", "加一条命"];
+const 道具图案 = { 变长: "📏", 多一个球: "⚪", 加一条命: "❤️" };
+
+let 砖块们 = [];          // 场上的砖：{ x, y, 宽, 高, 种类, 还要打几下 }
+let 球们 = [];            // 场上的球：{ x, y, vx, vy, 在挡板上 }
+let 道具们 = [];          // 正在往下掉的道具：{ x, y, 东西 }
+let 挡板 = { x: W / 2 };  // 挡板中间在哪
+let 剩几个球 = 3;
+let 分数 = 0;
+let 状态 = "玩";          // "玩"、"输了" 或 "赢了"
+let 保护墙还在 = false;
+let 变长到 = 0;           // 挡板变长，一直到第几帧
+let 一开始有砖 = false;
+let 帧数 = 0;
+let 话 = "", 话的寿命 = 0;  // 屏幕上的一句提示
+let 飘字们 = [];
+let 碎片们 = [];
+
+// 开一局新游戏
+function 开始() {
+  分数 = 0; 状态 = "玩"; 球们 = []; 道具们 = []; 飘字们 = []; 碎片们 = []; 变长到 = 0;
+  剩几个球 = 一局几个球();
+  保护墙还在 = 设置.底下有保护墙 === true || 设置.底下有保护墙 === "true";
+  挡板.x = W / 2;
+  摆砖块();
+  新球放在挡板上();
+}
+
+// 表格里填错了也不崩：没填、填错的用默认值
+function 整理种类() {
+  const 表 = {};
+  for (const 种 of 砖块种类) {
+    if (!种) continue;
+    const 记号 = Array.from(String(种.记号 == null ? "" : 种.记号))[0];
+    if (!记号 || 记号 === ".") continue;
+    let 掉 = 种.碎了掉出 == null ? "" : String(种.碎了掉出);
+    if (!认识的掉落.includes(掉)) { 说一句("不认识「" + 掉 + "」，" + 记号 + "砖碎了什么都不掉"); 掉 = ""; }
+    const 几下 = Math.max(1, Math.round(Number(种.打几下才碎)) || 1);
+    const 分 = Number.isFinite(Number(种.得几分)) && 种.得几分 !== null ? Number(种.得几分) : 1;
+    表[记号] = { 记号, 颜色: typeof 种.颜色 === "string" && 种.颜色 ? 种.颜色 : "#FFC93D", 打几下才碎: 几下, 得几分: 分, 碎了掉出: 掉 };
+  }
+  return 表;
+}
+
+// 照「砖块排列」把砖摆上去：按最长那排算宽度，短的排放在中间
+function 摆砖块() {
+  砖块们 = [];
+  const 种类表 = 整理种类();
+  const 排们 = (Array.isArray(砖块排列) ? 砖块排列 : []).map(排 => Array.from(String(排 == null ? "" : 排)));
+  const 最多几块 = Math.max(1, ...排们.map(排 => 排.length));
+  const 格宽 = Math.min(96, (场地.右 - 场地.左 - 40) / 最多几块);
+  const 格高 = Math.min(34, 250 / Math.max(1, 排们.length));
+  const 左边 = (W - 格宽 * 最多几块) / 2;
+  let 不认识 = "";
+  排们.forEach((排, 行) => {
+    const 这排左边 = 左边 + (最多几块 - 排.length) * 格宽 / 2;
+    排.forEach((字, 列) => {
+      const 种 = 种类表[字];
+      if (!种) { if (字 !== "." && 字.trim() && !不认识) 不认识 = 字; return; }
+      砖块们.push({ x: 这排左边 + 列 * 格宽 + 2, y: 场地.上 + 40 + 行 * 格高 + 2, 宽: 格宽 - 4, 高: 格高 - 4, 种类: 种, 还要打几下: 种.打几下才碎 });
+    });
+  });
+  一开始有砖 = 砖块们.length > 0;
+  if (!一开始有砖) 说一句("没有砖块！去「砖块排列」里加几排吧");
+  else if (不认识) 说一句("不认识「" + 不认识 + "」，当成空位");
+}
+
+function 一局几个球() { return Math.max(1, Math.round(Number(设置.有几个球)) || 3); }
+function 球速() { const 速 = Number(设置.球的速度); return 速 > 0 ? Math.min(速, 30) : 6; }
+function 挡板现在宽() {
+  const 宽 = Number(设置.挡板宽度), 最宽 = 场地.右 - 场地.左;
+  const 本来 = 宽 > 0 ? Math.min(宽, 最宽) : 160;
+  return 帧数 < 变长到 ? Math.min(本来 * 1.5, 最宽) : 本来;
+}
+function 移动挡板(x) {
+  const 半 = 挡板现在宽() / 2;
+  挡板.x = Math.max(场地.左 + 半, Math.min(场地.右 - 半, x));
+}
+
+function 新球放在挡板上() { 球们.push({ x: 挡板.x, y: 挡板Y - 球半径, vx: 0, vy: 0, 在挡板上: true }); }
+
+// 点一下：把停在挡板上的球发出去（稍微往右斜着飞）
+function 发球() {
+  if (状态 !== "玩") return;
+  for (const 球 of 球们) {
+    if (!球.在挡板上) continue;
+    球.在挡板上 = false;
+    球.vx = 球速() * Math.sin(0.35); 球.vy = -球速() * Math.cos(0.35);
+  }
+}
+
+// 球碰到挡板：打在左边往左飞，打在右边往右飞，越靠边飞得越斜
+function 碰到挡板(球, 宽) {
+  const 偏 = Math.max(-1, Math.min(1, (球.x - 挡板.x) / (宽 / 2)));   // -1 最左边，0 正中间，1 最右边
+  const 角度 = 偏 * 1.05;                                            // 最斜 60 度
+  球.vx = 球速() * Math.sin(角度); 球.vy = -球速() * Math.cos(角度);
+  球.y = 挡板Y - 球半径;
+}
+
+// 球打到一块砖
+function 打到砖(砖) {
+  砖.还要打几下--;
+  if (砖.还要打几下 > 0) { 飘字("还要 " + 砖.还要打几下 + " 下", 砖.x + 砖.宽 / 2, 砖.y, "#FFFFFF"); return; }
+  砖块们 = 砖块们.filter(别的 => 别的 !== 砖);
+  分数 += 砖.种类.得几分;
+  飘字("+" + 砖.种类.得几分, 砖.x + 砖.宽 / 2, 砖.y, "#FFE066");
+  for (let i = 0; i < 6; i++) 碎片们.push({ x: 砖.x + 砖.宽 / 2, y: 砖.y + 砖.高 / 2, vx: (Math.random() - 0.5) * 8, vy: -Math.random() * 5, 颜色: 砖.种类.颜色, 寿命: 30 });
+  if (砖.种类.碎了掉出) 道具们.push({ x: 砖.x + 砖.宽 / 2, y: 砖.y + 砖.高 / 2, 东西: 砖.种类.碎了掉出 });
+}
+
+// 挡板接到道具
+function 接到道具(东西) {
+  if (东西 === "变长") { 变长到 = 帧数 + 600; 说一句("挡板变长了！10 秒"); }
+  if (东西 === "多一个球") { 球们.push({ x: 挡板.x, y: 挡板Y - 球半径 - 2, vx: -球速() * Math.sin(0.5), vy: -球速() * Math.cos(0.5), 在挡板上: false }); 说一句("多了一个球！"); }
+  if (东西 === "加一条命") { 剩几个球++; 说一句("加一条命！还剩 " + 剩几个球 + " 个球"); }
+}
+
+// 球往前走一小步，看碰到了什么
+function 球走一小步(球, 份) {
+  const 前x = 球.x, 前y = 球.y;
+  球.x += 球.vx * 份; 球.y += 球.vy * 份;
+  // 左边、右边、上边的墙
+  if (球.x - 球半径 < 场地.左) { 球.x = 场地.左 + 球半径; 球.vx = Math.abs(球.vx); }
+  if (球.x + 球半径 > 场地.右) { 球.x = 场地.右 - 球半径; 球.vx = -Math.abs(球.vx); }
+  if (球.y - 球半径 < 场地.上) { 球.y = 场地.上 + 球半径; 球.vy = Math.abs(球.vy); }
+  // 挡板
+  const 宽 = 挡板现在宽();
+  if (球.vy > 0 && 球.y + 球半径 >= 挡板Y && 前y + 球半径 <= 挡板Y + 8 && Math.abs(球.x - 挡板.x) <= 宽 / 2 + 球半径) 碰到挡板(球, 宽);
+  // 砖块：碰到上下面，上下反弹；碰到左右面，左右反弹
+  for (const 砖 of 砖块们) {
+    if (球.x + 球半径 <= 砖.x || 球.x - 球半径 >= 砖.x + 砖.宽 || 球.y + 球半径 <= 砖.y || 球.y - 球半径 >= 砖.y + 砖.高) continue;
+    const 从左右来 = 前x + 球半径 <= 砖.x || 前x - 球半径 >= 砖.x + 砖.宽;
+    const 从上下来 = 前y + 球半径 <= 砖.y || 前y - 球半径 >= 砖.y + 砖.高;
+    if (从左右来 && !从上下来) 球.vx = 前x < 砖.x ? -Math.abs(球.vx) : Math.abs(球.vx);
+    else 球.vy = 前y < 砖.y ? -Math.abs(球.vy) : Math.abs(球.vy);
+    球.x = 前x; 球.y = 前y;
+    打到砖(砖);
+    break;
+  }
+  // 底下：有保护墙就挡一次，没有就掉下去了
+  if (保护墙还在 && 球.vy > 0 && 球.y + 球半径 >= 保护墙Y) { 球.y = 保护墙Y - 球半径; 球.vy = -Math.abs(球.vy); 保护墙还在 = false; 说一句("保护墙挡住了一次！"); }
+  if (球.y - 球半径 > 场地.下) 球.掉了 = true;
+}
+
+function 少一个球() {
+  剩几个球--;
+  if (剩几个球 <= 0) { 剩几个球 = 0; 输了(); return; }
+  说一句("球掉下去了，还剩 " + 剩几个球 + " 个球");
+  新球放在挡板上();
+}
+function 输了() { 状态 = "输了"; 说一句("球用完了！点「再来一局」"); }
+function 赢了() { 状态 = "赢了"; 说一句("砖块全打碎了，你赢了！"); }
+
+// 每一帧：挡板、球、道具都动一动
+function 更新() {
+  if (状态 !== "玩") return;
+  if (按着左) 移动挡板(挡板.x - 12);
+  if (按着右) 移动挡板(挡板.x + 12);
+  移动挡板(挡板.x);   // 挡板变长变短以后也不出界
+  for (const 球 of 球们) {
+    if (球.在挡板上) { 球.x = 挡板.x; 球.y = 挡板Y - 球半径; continue; }
+    const 几步 = Math.max(1, Math.ceil(Math.hypot(球.vx, 球.vy) / 4));   // 分几小步走，快的球也不会穿过砖
+    for (let i = 0; i < 几步 && !球.掉了; i++) 球走一小步(球, 1 / 几步);
+  }
+  球们 = 球们.filter(球 => !球.掉了);
+  if (球们.length === 0) 少一个球();
+  const 宽 = 挡板现在宽();
+  for (const 道具 of 道具们) {
+    道具.y += 3;
+    if (道具.y + 16 >= 挡板Y && 道具.y - 16 <= 挡板Y + 挡板高 && Math.abs(道具.x - 挡板.x) <= 宽 / 2 + 16) { 道具.没了 = true; 接到道具(道具.东西); }
+    else if (道具.y - 20 > 场地.下) 道具.没了 = true;
+  }
+  道具们 = 道具们.filter(道具 => !道具.没了);
+  if (状态 === "玩" && 一开始有砖 && 砖块们.length === 0) 赢了();
+}
+
+// ===== 操作：手指按住左右拖动挡板，点一下发球；也可以用方向键和空格 =====
+let 按住 = false, 按下的点 = null, 拖过 = false;
+let 按着左 = false, 按着右 = false;
+const 再来按钮 = { x: W / 2, y: H / 2 + 70, 宽: 220, 高: 64 };
+function 画布上的点(e) {
+  const r = canvas.getBoundingClientRect();
+  return { x: (e.clientX - r.left) / r.width * W, y: (e.clientY - r.top) / r.height * H };
+}
+canvas.addEventListener("pointerdown", e => {
+  const 点 = 画布上的点(e);
+  if (状态 !== "玩") {
+    if (Math.abs(点.x - 再来按钮.x) < 再来按钮.宽 / 2 && Math.abs(点.y - 再来按钮.y) < 再来按钮.高 / 2) 开始();
+    return;
+  }
+  按住 = true; 按下的点 = 点; 拖过 = false;
+  try { canvas.setPointerCapture(e.pointerId); } catch (错) { }
+});
+canvas.addEventListener("pointermove", e => {
+  if (!按住 || 状态 !== "玩") return;
+  const 点 = 画布上的点(e);
+  if (Math.abs(点.x - 按下的点.x) > 12) 拖过 = true;
+  if (拖过) 移动挡板(点.x);
+});
+canvas.addEventListener("pointerup", () => {
+  if (!按住) return;
+  按住 = false;
+  if (!拖过) 发球();   // 没拖动，就是点了一下
+});
+canvas.addEventListener("pointercancel", () => { 按住 = false; });
+document.addEventListener("keydown", e => {
+  if (e.key === "ArrowLeft") { 按着左 = true; e.preventDefault(); }
+  else if (e.key === "ArrowRight") { 按着右 = true; e.preventDefault(); }
+  else if (e.key === " " || e.key === "ArrowUp") { if (状态 === "玩") 发球(); else 开始(); e.preventDefault(); }
+});
+document.addEventListener("keyup", e => {
+  if (e.key === "ArrowLeft") 按着左 = false;
+  if (e.key === "ArrowRight") 按着右 = false;
+});
+
+// ===== 画画的小工具 =====
+function 说一句(文字) { 话 = 文字; 话的寿命 = 150; }
+function 飘字(文字, x, y, 颜色) { 飘字们.push({ 文字, x, y, 颜色, 寿命: 40 }); }
+function 圆角矩形(x, y, w, h, r) {
+  r = Math.max(0, Math.min(r, w / 2, h / 2));
+  ctx.beginPath(); ctx.moveTo(x + r, y); ctx.arcTo(x + w, y, x + w, y + h, r); ctx.arcTo(x + w, y + h, x, y + h, r);
+  ctx.arcTo(x, y + h, x, y, r); ctx.arcTo(x, y, x + w, y, r); ctx.closePath(); ctx.fill();
+}
+function 画表情(文字, x, y, 大小) {
+  ctx.font = 大小 + 'px "Apple Color Emoji","Segoe UI Emoji","Noto Color Emoji",sans-serif';
+  ctx.fillStyle = "#000"; ctx.textAlign = "center"; ctx.textBaseline = "middle"; ctx.fillText(文字, x, y);
+}
+function 画文字(文字, x, y, 大小, 颜色) {
+  ctx.fillStyle = 颜色; ctx.font = "bold " + 大小 + 'px "PingFang SC","Microsoft YaHei",sans-serif';
+  ctx.textAlign = "center"; ctx.textBaseline = "middle"; ctx.fillText(文字, x, y);
+}
+// 要打好几下的砖，被打过就裂开：打过几下，就有几道裂纹
+function 画裂纹(砖, 几道) {
+  ctx.strokeStyle = "rgba(30,42,74,0.6)"; ctx.lineWidth = 2;
+  for (let i = 0; i < Math.min(几道, 3); i++) {
+    const x = 砖.x + 砖.宽 * (0.2 + 0.3 * i);
+    ctx.beginPath(); ctx.moveTo(x, 砖.y); ctx.lineTo(x + 6, 砖.y + 砖.高 * 0.35); ctx.lineTo(x - 4, 砖.y + 砖.高 * 0.65); ctx.lineTo(x + 3, 砖.y + 砖.高); ctx.stroke();
+  }
+}
+
+function 画() {
+  ctx.fillStyle = "#FFF7EC"; ctx.fillRect(0, 0, W, H);
+
+  // 顶上：比特、分数、还剩几个球
+  画表情("🐶", 40, 32, 34);
+  画文字("分数 " + 分数, 140, 32, 28, "#1E2A4A");
+  if (保护墙还在) 画文字("保护墙 ✓", W / 2, 32, 22, "#18A87C");
+  画文字("还剩", 790, 32, 24, "#5B6683");
+  画表情("⚪", 852, 32, 26);
+  画文字("× " + 剩几个球, 900, 32, 28, "#1E2A4A");
+
+  // 场地
+  ctx.fillStyle = 设置.背景颜色; 圆角矩形(场地.左, 场地.上, 场地.右 - 场地.左, 场地.下 - 场地.上, 18);
+
+  // 砖块
+  for (const 砖 of 砖块们) {
+    ctx.fillStyle = 砖.种类.颜色; 圆角矩形(砖.x, 砖.y, 砖.宽, 砖.高, 6);
+    ctx.fillStyle = "rgba(255,255,255,0.28)"; 圆角矩形(砖.x + 4, 砖.y + 3, 砖.宽 - 8, Math.max(2, 砖.高 * 0.25), 3);
+    if (砖.种类.打几下才碎 > 1) {
+      const 打过 = 砖.种类.打几下才碎 - 砖.还要打几下;
+      if (打过 > 0) 画裂纹(砖, 打过);
+      画文字(String(砖.还要打几下), 砖.x + 砖.宽 / 2, 砖.y + 砖.高 / 2 + 1, Math.max(10, Math.min(22, 砖.高 - 6)), "#1E2A4A");
+    }
+    if (砖.种类.碎了掉出 && 砖.宽 > 36) 画表情(道具图案[砖.种类.碎了掉出], 砖.x + 砖.宽 - 13, 砖.y + 砖.高 / 2 + 1, Math.max(10, Math.min(18, 砖.高 - 8)));
+  }
+
+  // 碎片
+  for (const 片 of 碎片们) {
+    ctx.globalAlpha = 片.寿命 / 30; ctx.fillStyle = 片.颜色; ctx.fillRect(片.x - 4, 片.y - 4, 8, 8); ctx.globalAlpha = 1;
+    片.x += 片.vx; 片.y += 片.vy; 片.vy += 0.3; 片.寿命--;
+  }
+  碎片们 = 碎片们.filter(片 => 片.寿命 > 0);
+
+  // 掉下来的道具
+  for (const 道具 of 道具们) {
+    ctx.fillStyle = "rgba(255,255,255,0.18)"; ctx.beginPath(); ctx.arc(道具.x, 道具.y, 20, 0, Math.PI * 2); ctx.fill();
+    画表情(道具图案[道具.东西] || "🎁", 道具.x, 道具.y, 28);
+  }
+
+  // 保护墙
+  if (保护墙还在) { ctx.fillStyle = "#5BE0FF"; 圆角矩形(场地.左 + 10, 保护墙Y - 3, 场地.右 - 场地.左 - 20, 6, 3); }
+
+  // 挡板：比特坐在上面
+  const 宽 = 挡板现在宽();
+  ctx.fillStyle = 帧数 < 变长到 ? "#FFC93D" : "#FF8A3D"; 圆角矩形(挡板.x - 宽 / 2, 挡板Y, 宽, 挡板高, 10);
+  画表情("🐶", 挡板.x, 挡板Y + 挡板高 / 2 + 1, 20);
+
+  // 球
+  for (const 球 of 球们) {
+    ctx.fillStyle = "rgba(255,255,255,0.25)"; ctx.beginPath(); ctx.arc(球.x, 球.y, 球半径 + 5, 0, Math.PI * 2); ctx.fill();
+    ctx.fillStyle = "#FFFFFF"; ctx.beginPath(); ctx.arc(球.x, 球.y, 球半径, 0, Math.PI * 2); ctx.fill();
+  }
+  if (状态 === "玩" && 球们.some(球 => 球.在挡板上)) 画文字("点一下发球", W / 2, 挡板Y - 70, 26, "rgba(255,255,255,0.85)");
+
+  // 飘字
+  for (const 字 of 飘字们) {
+    ctx.globalAlpha = 字.寿命 / 40; 画文字(字.文字, 字.x, 字.y, 26, 字.颜色); 字.y -= 1.2; 字.寿命--; ctx.globalAlpha = 1;
+  }
+  飘字们 = 飘字们.filter(字 => 字.寿命 > 0);
+
+  // 输了、赢了：再来一局
+  if (状态 !== "玩") {
+    ctx.fillStyle = "rgba(255,247,236,0.95)"; 圆角矩形(W / 2 - 230, H / 2 - 120, 460, 250, 26);
+    画文字(状态 === "赢了" ? "你赢了！🎉" : "球用完了", W / 2, H / 2 - 66, 44, "#1E2A4A");
+    画文字("得了 " + 分数 + " 分", W / 2, H / 2 - 6, 28, "#5B6683");
+    ctx.fillStyle = "#FF8A3D"; 圆角矩形(再来按钮.x - 再来按钮.宽 / 2, 再来按钮.y - 再来按钮.高 / 2, 再来按钮.宽, 再来按钮.高, 20);
+    画文字("再来一局", 再来按钮.x, 再来按钮.y, 28, "#FFFFFF");
+  }
+
+  // 一句提示
+  if (话的寿命 > 0) {
+    话的寿命--;
+    ctx.globalAlpha = Math.min(1, 话的寿命 / 30);
+    ctx.fillStyle = "rgba(255,255,255,0.92)"; 圆角矩形(W / 2 - 300, 场地.上 + 12, 600, 52, 18);
+    画文字(话, W / 2, 场地.上 + 38, 24, "#1E2A4A");
+    ctx.globalAlpha = 1;
+  }
+}
+
+// 每一帧都会运行一次
+function 游戏循环() {
+  帧数++;
+  更新();
+  画();
+  requestAnimationFrame(游戏循环);
+}
+开始();
+游戏循环();
+</script>
+</body>
+</html>

@@ -1,0 +1,77 @@
+{
+  "teacher": {
+    "eol": "lf",
+    "mods": [
+      "shared/base.js",
+      "shared/icons.js",
+      "shared/sprites.js",
+      "shared/bit.js",
+      "shared/items.js",
+      "shared/dance.js",
+      "shared/lessons.js",
+      "shared/core-state.js",
+      "shared/genie-core.js",
+      "shared/mock-s2.js",
+      "shared/mock-genie.js",
+      "shared/works.js",
+      "shared/service.js",
+      "browser/snd.js",
+      "browser/engines.js",
+      "browser/net.js",
+      "browser/hub.js",
+      "browser/pickshim.js",
+      "teacher/notes.js",
+      "teacher/teacher.js"
+    ]
+  },
+  "student": {
+    "eol": "lf",
+    "mods": [
+      "shared/base.js",
+      "shared/icons.js",
+      "shared/sprites.js",
+      "shared/bit.js",
+      "shared/items.js",
+      "shared/dance.js",
+      "shared/lessons.js",
+      "shared/core-state.js",
+      "shared/genie-core.js",
+      "shared/mock-s2.js",
+      "shared/mock-genie.js",
+      "shared/works.js",
+      "shared/service.js",
+      "browser/snd.js",
+      "browser/engines.js",
+      "browser/net.js",
+      "browser/hub.js",
+      "browser/pickshim.js",
+      "student/student.js"
+    ]
+  },
+  "screen": {
+    "eol": "lf",
+    "mods": [
+      "shared/base.js",
+      "shared/icons.js",
+      "shared/sprites.js",
+      "shared/bit.js",
+      "shared/items.js",
+      "shared/dance.js",
+      "shared/lessons.js",
+      "shared/core-state.js",
+      "shared/genie-core.js",
+      "shared/mock-s2.js",
+      "shared/mock-genie.js",
+      "shared/works.js",
+      "shared/service.js",
+      "browser/snd.js",
+      "browser/engines.js",
+      "browser/net.js",
+      "browser/hub.js",
+      "browser/pickshim.js",
+      "screen/starters.nomark.js",
+      "screen/render.js",
+      "screen/screen.js"
+    ]
+  }
+}

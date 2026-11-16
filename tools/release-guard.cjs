@@ -1,0 +1,6 @@
+'use strict';
+const fs=require('fs'),path=require('path');
+const root=path.resolve(__dirname,'..'),skip=new Set(['.git','.tmp','.artifacts','.cache','node_modules']);
+const findings=[];let count=0;
+function walk(dir){for(const e of fs.readdirSync(dir,{withFileTypes:true})){if(skip.has(e.name))continue;const f=path.join(dir,e.name),rel=path.relative(root,f).replaceAll('\\','/');if(e.isDirectory()){if(['data','deploy-private','codex-gateway'].includes(e.name))findings.push(rel+': 私有目录');else walk(f);continue;}count++;if(/^(config\.json|\.env(?:\..*)?)$/.test(e.name)&&e.name!=='.env.example')findings.push(rel+': 私有配置');if(/\.(pem|key|log|zip|gz)$/.test(e.name))findings.push(rel+': 禁止发布的文件类型');const text=fs.readFileSync(f,'utf8');const checks=[[/-----BEGIN (?:RSA |EC |OPENSSH )?PRIVATE KEY-----/,'私钥'],[/\b(?:sk-[A-Za-z0-9_-]{24,}|gh[pousr]_[A-Za-z0-9_]{20,})\b/,'高置信令牌'],[/100\.(?:6[4-9]|[7-9][0-9]|1[01][0-9]|12[0-7])\.[0-9]+\.[0-9]+/,'共享内网部署地址'],[/[A-Z]:[\\/](?:Users|Claude)[\\/]/i,'私人绝对路径']];for(const [re,name] of checks)if(re.test(text))findings.push(rel+': '+name);}}
+walk(root);if(findings.length){console.error(findings.join('\n'));process.exitCode=1;}else console.log('PASS：'+count+' 个发布文件，未发现所检查的私有目录、配置、内部部署地址和高置信令牌。仍需人工审查暂存区和历史。');

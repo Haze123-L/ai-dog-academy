@@ -1,0 +1,462 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, user-scalable=no">
+<title>接星星</title>
+<style>
+  html, body { margin: 0; height: 100%; background: #FFF7EC; font-family: "PingFang SC", "Microsoft YaHei", sans-serif; color: #1E2A4A; touch-action: none; }
+  #box { height: 100%; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 10px; }
+  h1 { margin: 0; font-size: 28px; }
+  canvas { width: min(96vw, 160vh); max-height: 82vh; aspect-ratio: 16 / 9; border-radius: 18px; box-shadow: 0 6px 0 #F0E2CC; background: #FFF7EC; }
+  p { margin: 0; color: #5B6683; font-size: 18px; }
+</style>
+</head>
+<body>
+<div id="box">
+  <h1>接星星</h1>
+  <canvas id="game" width="960" height="540"></canvas>
+  <p>手指按住画面左右拖，让比特用篮子接星星；左上角写着现在在哪个画面</p>
+</div>
+
+<script>
+// ===== 游戏设置：想改游戏，先改这里 =====
+const 设置 = {
+  一局几秒: 30,            // 一局玩几秒，时间到了看「流程」去哪
+  有开始画面: false,       // true：一打开游戏，先看到开始画面
+  有结束画面: false,       // true：有结束画面（显示这局得分和金币）
+  有商店: false,           // true：有商店（用金币买东西）
+  背景颜色: "#1E2A4A",     // 玩的时候夜空的颜色
+};
+
+// ===== 流程：画面之间怎么走 =====
+// 每一行：从哪个画面，按什么（按钮上的字；"时间到" 表示一局时间到了自动走），到哪个画面
+// 画面只有这几个："开始画面" "游戏" "结束画面" "商店"
+// 例子：{ 从: "开始画面", 按: "开始", 到: "游戏" },
+const 流程 = [
+];
+
+// ===== 商店里卖的东西（有商店才用得上）：钱够才能买 =====
+// 价钱：要几个金币（接到一颗星星得 1 个金币）
+// 效果：只能填这几种 —— "篮子变大" "星星掉得慢" "星星自己飞过来" "挡一次石头"
+const 商品们 = [
+  { 名字: "大篮子", 图案: "🧺", 价钱: 5, 效果: "篮子变大" },
+  { 名字: "慢动作", 图案: "🐢", 价钱: 3, 效果: "星星掉得慢" },
+  { 名字: "磁铁", 图案: "🧲", 价钱: 8, 效果: "星星自己飞过来" },
+];
+
+// ===== 下面是游戏程序 =====
+const canvas = document.getElementById("game");
+const ctx = canvas.getContext("2d");
+const W = canvas.width, H = canvas.height;
+const 画面们 = ["开始画面", "游戏", "结束画面", "商店"];
+const 认识的效果 = ["篮子变大", "星星掉得慢", "星星自己飞过来", "挡一次石头"];
+const 篮子Y = 370;          // 篮子口有多高：星星掉到这里就算接住
+const 篮子本来宽 = 110;
+
+let 现在的画面 = "游戏";    // 现在在哪个画面
+let 分数 = 0;               // 这一局的分数
+let 金币 = 0;               // 金币一直攒着，再玩一局也不清零
+let 剩余帧数 = 0;           // 这一局还剩几帧（60 帧 = 1 秒）
+let 时间到了 = false;
+let 时间到后几帧 = 0;
+let 篮子X = W / 2;
+let 天上 = [];              // 正在往下掉的星星和石头
+let 已买 = [];              // 买过的商品的名字
+let 护盾 = 0;               // 还能挡几次石头
+let 拖着 = false;           // 手指是不是正按着画面
+let 按着左 = false, 按着右 = false;
+let 帧数 = 0;
+let 话 = "", 话的寿命 = 0;   // 屏幕上的一句提示
+let 飘字们 = [];
+
+// 打开游戏：有开始画面就先去开始画面，没有就直接开始玩
+function 开始() {
+  金币 = 0; 已买 = []; 护盾 = 0;
+  if (设置.有开始画面 === true) 现在的画面 = "开始画面";
+  else { 现在的画面 = "游戏"; 开一局(); }
+  const 看不懂 = 流程表().length - 能走的路().length;
+  if (看不懂 > 0) 说一句("流程里有 " + 看不懂 + " 行看不懂，先跳过了");
+}
+
+// 开新的一局：分数清零，金币留着
+function 开一局() {
+  分数 = 0; 天上 = []; 飘字们 = []; 时间到了 = false; 时间到后几帧 = 0; 篮子X = W / 2; 拖着 = false;
+  const 秒 = Number(设置.一局几秒);
+  剩余帧数 = Math.round((秒 > 0 ? Math.min(秒, 600) : 30) * 60);
+}
+
+// ===== 画面怎么走：全听「流程」表的 =====
+function 流程表() { return Array.isArray(流程) ? 流程 : []; }
+// 填对了的行：画面名写错、没写按什么的行，跳过
+function 能走的路() {
+  const 路们 = [];
+  for (const 行 of 流程表()) {
+    if (!行 || typeof 行 !== "object") continue;
+    const 从 = String(行.从 == null ? "" : 行.从).trim();
+    const 按 = String(行.按 == null ? "" : 行.按).trim();
+    const 到 = String(行.到 == null ? "" : 行.到).trim();
+    if (画面们.includes(从) && 画面们.includes(到) && 按) 路们.push({ 从, 按, 到 });
+  }
+  return 路们;
+}
+// 这个画面上有哪些按钮：流程表里「从」是这个画面的行（"时间到" 不是按钮）
+function 这个画面的按钮(画面) { return 能走的路().filter(路 => 路.从 === 画面 && 路.按 !== "时间到").slice(0, 6); }
+// 这个画面在设置里打开了没有（"游戏" 一直都有）
+function 画面开着(画面) {
+  if (画面 === "游戏") return true;
+  if (画面 === "开始画面") return 设置.有开始画面 === true;
+  if (画面 === "结束画面") return 设置.有结束画面 === true;
+  if (画面 === "商店") return 设置.有商店 === true;
+  return false;
+}
+// 去另一个画面
+function 去(画面) {
+  if (!画面开着(画面)) { 说一句("还没有" + (画面.endsWith("画面") ? 画面 : 画面 + "画面")); return false; }
+  现在的画面 = 画面; 拖着 = false;
+  if (画面 === "游戏") 开一局();
+  return true;
+}
+// 一局时间到了：看流程表里「从 游戏，按 时间到」那行去哪；没有这一行，就停在这里
+function 时间到以后() {
+  const 路 = 能走的路().find(路 => 路.从 === "游戏" && 路.按 === "时间到");
+  if (路) 去(路.到);
+}
+
+// ===== 玩：星星和石头往下掉，篮子接 =====
+function 掉一个() {
+  const 是石头 = Math.random() < 0.2;
+  天上.push({ 图案: 是石头 ? "🪨" : "⭐", 是石头, x: 50 + Math.random() * (W - 100), y: -30, 速度: 2.6 + Math.random() * 1.2 });
+}
+function 篮子宽() { return 有效果("篮子变大") ? 篮子本来宽 * 2 : 篮子本来宽; }
+
+function 接到(东西) {
+  东西.不见了 = true;
+  if (!东西.是石头) { 分数 += 1; 金币 += 1; 飘字("+1", 东西.x, 篮子Y - 40, "#FFE58A"); return; }
+  if (护盾 > 0) {   // 买了护盾：这一次石头不扣分
+    护盾--;
+    if (护盾 === 0) 已买 = 已买.filter(名字 => !商品表().some(货 => 货.名字 === 名字 && 货.效果 === "挡一次石头"));
+    飘字("挡住了！", 东西.x, 篮子Y - 40, "#5BE0FF");
+    return;
+  }
+  分数 -= 1; 飘字("-1", 东西.x, 篮子Y - 40, "#FF6B6B");
+}
+
+function 更新游戏() {
+  if (按着左) 篮子X -= 12;
+  if (按着右) 篮子X += 12;
+  const 半宽 = 篮子宽() / 2;
+  篮子X = Math.max(半宽, Math.min(W - 半宽, 篮子X));
+  if (时间到了) { 时间到后几帧++; if (时间到后几帧 === 60) 时间到以后(); return; }
+  剩余帧数--;
+  if (剩余帧数 <= 0) { 剩余帧数 = 0; 时间到了 = true; 时间到后几帧 = 0; 天上 = []; 拖着 = false; return; }
+  if (剩余帧数 % 36 === 0) 掉一个();
+  const 慢 = 有效果("星星掉得慢") ? 0.5 : 1;
+  const 吸 = 有效果("星星自己飞过来");
+  for (const 东西 of 天上) {
+    东西.y += 东西.速度 * 慢;
+    if (吸 && !东西.是石头 && 东西.y > 120 && Math.abs(东西.x - 篮子X) < 300) 东西.x += (篮子X - 东西.x) * 0.08;
+    if (!东西.不见了 && 东西.y > 篮子Y - 22 && 东西.y < 篮子Y + 26 && Math.abs(东西.x - 篮子X) < 半宽 + 12) 接到(东西);
+  }
+  天上 = 天上.filter(东西 => !东西.不见了 && 东西.y < H + 40);
+}
+
+// ===== 商店 =====
+// 整理一下商品表：缺名字、缺图案、价钱不是数字，都用默认的
+function 商品表() {
+  const 表 = [];
+  for (const 货 of (Array.isArray(商品们) ? 商品们 : [])) {
+    if (!货 || typeof 货 !== "object") continue;
+    const 钱 = Math.round(Number(货.价钱));
+    表.push({ 名字: String(货.名字 || "神秘商品"), 图案: String(货.图案 || "🎁"), 价钱: 钱 >= 0 ? 钱 : 5, 效果: String(货.效果 || "") });
+  }
+  return 表.slice(0, 8);
+}
+function 有效果(效果) { return 商品表().some(货 => 货.效果 === 效果 && 已买.includes(货.名字)); }
+function 买(货) {
+  if (已买.includes(货.名字)) { 说一句(货.名字 + "已经买过了"); return; }
+  if (金币 < 货.价钱) { 说一句("钱不够，还差 " + (货.价钱 - 金币) + " 个金币"); return; }
+  金币 -= 货.价钱;
+  已买.push(货.名字);
+  if (货.效果 === "挡一次石头") 护盾++;
+  if (认识的效果.includes(货.效果)) 说一句("买到了" + 货.名字 + "：" + 货.效果 + "！");
+  else 说一句("买了" + 货.名字 + "，可是「" + (货.效果 || "没写效果") + "」我不会，没用");
+}
+// 第 i 张商品卡在哪（一排最多 4 张）
+function 商品位置(i, n) {
+  const 两排 = n > 4, 宽 = 190, 高 = 两排 ? 140 : 220, 间隔 = 20;
+  const 第几排 = Math.floor(i / 4), 这排几个 = Math.min(4, n - 第几排 * 4);
+  const 左 = W / 2 - (这排几个 * 宽 + (这排几个 - 1) * 间隔) / 2;
+  return { x: 左 + (i % 4) * (宽 + 间隔), y: (两排 ? 100 : 130) + 第几排 * (高 + 间隔), 宽, 高 };
+}
+function 点到的商品(x, y) {
+  const 表 = 商品表();
+  for (let i = 0; i < 表.length; i++) {
+    const 卡 = 商品位置(i, 表.length);
+    if (x > 卡.x && x < 卡.x + 卡.宽 && y > 卡.y && y < 卡.y + 卡.高) return 表[i];
+  }
+  return null;
+}
+
+// ===== 操作：手指按住画面左右拖（也可以用方向键），点按钮换画面 =====
+// 第 i 个按钮在哪：游戏画面的按钮竖着排在右边，别的画面横着排在下面
+function 按钮位置(画面, i, n) {
+  if (画面 === "游戏") return { x: W - 105, y: 112 + i * 62, 宽: 170, 高: 50 };
+  const 宽 = Math.min(220, (W - 80) / n - 20);
+  return { x: W / 2 + (i - (n - 1) / 2) * (宽 + 20), y: 470, 宽, 高: 64 };
+}
+function 点了(x, y) {
+  const 按钮们 = 这个画面的按钮(现在的画面);
+  for (let i = 0; i < 按钮们.length; i++) {
+    const b = 按钮位置(现在的画面, i, 按钮们.length);
+    if (Math.abs(x - b.x) < b.宽 / 2 && Math.abs(y - b.y) < b.高 / 2) { 去(按钮们[i].到); return; }
+  }
+  if (现在的画面 === "商店") { const 货 = 点到的商品(x, y); if (货) { 买(货); return; } }
+  if (现在的画面 === "游戏" && !时间到了) { 拖着 = true; 篮子X = x; return; }
+  if (按钮们.length === 0) 说一句(现在的画面 === "游戏" ? "时间到了，可是没有按钮，去不了别的画面" : "这个画面没有按钮，出不去了");
+}
+function 手指在哪(e) {
+  const r = canvas.getBoundingClientRect();
+  return { x: (e.clientX - r.left) / r.width * W, y: (e.clientY - r.top) / r.height * H };
+}
+canvas.addEventListener("pointerdown", e => {
+  const 点 = 手指在哪(e);
+  点了(点.x, 点.y);
+  if (拖着) { try { canvas.setPointerCapture(e.pointerId); } catch (错) { } }
+});
+canvas.addEventListener("pointermove", e => { if (拖着 && 现在的画面 === "游戏") 篮子X = 手指在哪(e).x; });
+canvas.addEventListener("pointerup", () => { 拖着 = false; });
+canvas.addEventListener("pointercancel", () => { 拖着 = false; });
+document.addEventListener("keydown", e => {
+  if (e.key === "ArrowLeft") { 按着左 = true; e.preventDefault(); }
+  if (e.key === "ArrowRight") { 按着右 = true; e.preventDefault(); }
+  if (e.key === "Enter") { const 按钮们 = 这个画面的按钮(现在的画面); if (按钮们.length) 去(按钮们[0].到); }
+});
+document.addEventListener("keyup", e => {
+  if (e.key === "ArrowLeft") 按着左 = false;
+  if (e.key === "ArrowRight") 按着右 = false;
+});
+
+// ===== 画画的小工具 =====
+function 说一句(文字) { 话 = 文字; 话的寿命 = 150; }
+function 飘字(文字, x, y, 颜色) { 飘字们.push({ 文字, x, y, 颜色, 寿命: 40 }); }
+function 圆角矩形(x, y, w, h, r) {
+  ctx.beginPath(); ctx.moveTo(x + r, y); ctx.arcTo(x + w, y, x + w, y + h, r); ctx.arcTo(x + w, y + h, x, y + h, r);
+  ctx.arcTo(x, y + h, x, y, r); ctx.arcTo(x, y, x + w, y, r); ctx.closePath(); ctx.fill();
+}
+function 画表情(文字, x, y, 大小) {
+  ctx.font = 大小 + 'px "Apple Color Emoji","Segoe UI Emoji","Noto Color Emoji",sans-serif';
+  ctx.fillStyle = "#000"; ctx.textAlign = "center"; ctx.textBaseline = "middle"; ctx.fillText(文字, x, y);
+}
+function 画文字(文字, x, y, 大小, 颜色) {
+  ctx.fillStyle = 颜色; ctx.font = "bold " + 大小 + 'px "PingFang SC","Microsoft YaHei",sans-serif';
+  ctx.textAlign = "center"; ctx.textBaseline = "middle"; ctx.fillText(文字, x, y);
+}
+function 画小星星(x, y, r, 颜色) {
+  ctx.fillStyle = 颜色; ctx.beginPath();
+  for (let i = 0; i < 10; i++) { const 角 = -Math.PI / 2 + i * Math.PI / 5, 长 = i % 2 ? r * 0.45 : r; ctx.lineTo(x + Math.cos(角) * 长, y + Math.sin(角) * 长); }
+  ctx.closePath(); ctx.fill();
+}
+// 画驯狗学院的机器狗「比特」
+function 画比特(x, y, 大小) {
+  const s = 大小 / 100;
+  ctx.save(); ctx.translate(x, y); ctx.scale(s, s);
+  // 影子
+  ctx.fillStyle = "rgba(36,48,94,.16)"; ctx.beginPath(); ctx.ellipse(0, 54, 40, 6, 0, 0, Math.PI * 2); ctx.fill();
+  // 后腿
+  ctx.fillStyle = "#F4F6FA"; ctx.strokeStyle = "#C5CCD8"; ctx.lineWidth = 1.5;
+  [[-28, 20], [28, 20]].forEach(([lx, ly]) => { 圆角矩形(lx - 8, ly, 16, 26, 8); });
+  ctx.fillStyle = "#FF8A3D";
+  [[-28, 42], [28, 42]].forEach(([lx, ly]) => { 圆角矩形(lx - 10, ly, 20, 12, 5); });
+  // 尾巴
+  ctx.strokeStyle = "#FF8A3D"; ctx.lineWidth = 9; ctx.lineCap = "round";
+  ctx.beginPath(); ctx.moveTo(26, 8); ctx.quadraticCurveTo(44, 14, 40, 30); ctx.stroke();
+  // 身体
+  ctx.fillStyle = "#F4F6FA"; 圆角矩形(-34, -18, 68, 56, 22);
+  ctx.strokeStyle = "#C5CCD8"; ctx.lineWidth = 2; ctx.beginPath();
+  (function(x,y,w,h,r){ctx.moveTo(x+r,y);ctx.arcTo(x+w,y,x+w,y+h,r);ctx.arcTo(x+w,y+h,x,y+h,r);ctx.arcTo(x,y+h,x,y,r);ctx.arcTo(x,y,x+w,y,r);ctx.closePath();})(-34,-18,68,56,22); ctx.stroke();
+  // 橙心 </>
+  ctx.fillStyle = "#FF8A3D";
+  ctx.beginPath();
+  ctx.moveTo(0, 22); ctx.bezierCurveTo(-18, 8, -26, -4, -16, -12); ctx.bezierCurveTo(-10, -16, -4, -12, 0, -6);
+  ctx.bezierCurveTo(4, -12, 10, -16, 16, -12); ctx.bezierCurveTo(26, -4, 18, 8, 0, 22);
+  ctx.fill();
+  ctx.strokeStyle = "#fff"; ctx.lineWidth = 2.4; ctx.lineCap = "round"; ctx.lineJoin = "round";
+  ctx.beginPath(); ctx.moveTo(-9, -14); ctx.lineTo(-15, -8); ctx.lineTo(-9, -2); ctx.stroke();
+  ctx.beginPath(); ctx.moveTo(-2.5, -14); ctx.lineTo(2.5, -2); ctx.stroke();
+  ctx.beginPath(); ctx.moveTo(9, -14); ctx.lineTo(15, -8); ctx.lineTo(9, -2); ctx.stroke();
+  // 前腿
+  ctx.fillStyle = "#F4F6FA";
+  [[-16, 24], [16, 24]].forEach(([lx, ly]) => { 圆角矩形(lx - 7, ly, 14, 24, 7); });
+  ctx.fillStyle = "#FF8A3D";
+  [[-16, 44], [16, 44]].forEach(([lx, ly]) => { 圆角矩形(lx - 9, ly, 18, 11, 5); });
+  // 垂耳：从头两侧下垂的胶囊耳（正旋转=下垂；负旋转会变成翅耳）
+  ctx.fillStyle = "#FF8A3D";
+  ctx.beginPath(); ctx.ellipse(-48, -48, 13, 30, 0.35, 0, Math.PI * 2); ctx.fill();
+  ctx.beginPath(); ctx.ellipse(48, -48, 13, 30, -0.35, 0, Math.PI * 2); ctx.fill();
+  ctx.fillStyle = "#FFC08A";
+  ctx.beginPath(); ctx.ellipse(-48, -46, 6, 18, 0.35, 0, Math.PI * 2); ctx.fill();
+  ctx.beginPath(); ctx.ellipse(48, -46, 6, 18, -0.35, 0, Math.PI * 2); ctx.fill();
+  // 头
+  ctx.fillStyle = "#F4F6FA"; 圆角矩形(-40, -88, 80, 72, 30);
+  ctx.strokeStyle = "#C5CCD8"; ctx.lineWidth = 2; ctx.beginPath();
+  (function(x,y,w,h,r){ctx.moveTo(x+r,y);ctx.arcTo(x+w,y,x+w,y+h,r);ctx.arcTo(x+w,y+h,x,y+h,r);ctx.arcTo(x,y+h,x,y,r);ctx.arcTo(x,y,x+w,y,r);ctx.closePath();})(-40,-88,80,72,30); ctx.stroke();
+  ctx.fillStyle = "rgba(255,255,255,.55)"; ctx.beginPath(); ctx.ellipse(-14, -70, 16, 8, -0.3, 0, Math.PI * 2); ctx.fill();
+  // 黑面罩
+  ctx.fillStyle = "#141820"; ctx.beginPath(); ctx.ellipse(0, -52, 28, 22, 0, 0, Math.PI * 2); ctx.fill();
+  // 四角星星眼 ✦
+  ctx.fillStyle = "#5BE0FF";
+  for (const [ex, ey] of [[-12, -54], [12, -54]]) {
+    ctx.beginPath();
+    const outer = 9, inner = 9 * 0.38;
+    for (let i = 0; i < 8; i++) {
+      const a = -Math.PI / 2 + i * Math.PI / 4;
+      const rad = i % 2 === 0 ? outer : inner;
+      const x = ex + Math.cos(a) * rad, y = ey + Math.sin(a) * rad;
+      if (i === 0) ctx.moveTo(x, y); else ctx.lineTo(x, y);
+    }
+    ctx.closePath(); ctx.fill();
+  }
+  // 像素小嘴
+  [[-5, -40], [-1, -38], [3, -40]].forEach(([mx, my]) => { 圆角矩形(mx, my, 2.6, 2.2, 0.4); });
+  // 天线：橙底座 + 白杆 + 白球
+  ctx.fillStyle = "#FF8A3D"; ctx.beginPath(); ctx.ellipse(0, -88, 7, 4, 0, 0, Math.PI * 2); ctx.fill();
+  ctx.strokeStyle = "#F2F4F8"; ctx.lineWidth = 4; ctx.lineCap = "round";
+  ctx.beginPath(); ctx.moveTo(0, -88); ctx.lineTo(0, -104); ctx.stroke();
+  ctx.fillStyle = "#FFFFFF"; ctx.strokeStyle = "#D0D6E2"; ctx.lineWidth = 1;
+  ctx.beginPath(); ctx.arc(0, -106, 5.5, 0, Math.PI * 2); ctx.fill(); ctx.stroke();
+  ctx.restore();
+}
+// 比特举着篮子：x 是篮子中间，y 是篮子口，宽倍 = 篮子变宽几倍
+function 画比特举篮子(x, y, 宽倍) {
+  画比特(x - 24, y + 115, 80);
+  ctx.strokeStyle = "#E0681C"; ctx.lineWidth = 8; ctx.lineCap = "round";
+  ctx.beginPath(); ctx.moveTo(x - 50, y + 100); ctx.lineTo(x - 34, y + 46); ctx.moveTo(x + 2, y + 100); ctx.lineTo(x + 30, y + 46); ctx.stroke();
+  ctx.save(); ctx.translate(x, y + 18); ctx.scale(宽倍, 1); 画表情("🧺", 0, 0, 76); ctx.restore();
+}
+// 开始、结束、商店画面的浅色底，有几颗一闪一闪的小星星
+function 画浅色底() {
+  ctx.fillStyle = "#FFF7EC"; ctx.fillRect(0, 0, W, H);
+  const 点们 = [[80, 120], [880, 150], [140, 420], [840, 400], [340, 56], [620, 56], [650, 300]];
+  点们.forEach(([x, y], i) => 画小星星(x, y, 12 + (i % 3) * 4 + Math.sin((帧数 + i * 15) / 30) * 2, "#FFE0A3"));
+}
+function 画药丸(x, y, 宽, 颜色) {   // 一个圆圆的白色小标签
+  ctx.fillStyle = 颜色 || "rgba(255,255,255,0.94)"; 圆角矩形(x, y, 宽, 46, 23);
+}
+
+// ===== 每个画面怎么画 =====
+function 画开始画面() {
+  画浅色底();
+  画文字("接星星", W / 2, 140, 96, "#1E2A4A");
+  画表情("⭐", W / 2 - 220, 132, 60); 画表情("⭐", W / 2 + 220, 132, 60);
+  画文字("帮比特用篮子接住天上掉下来的星星", W / 2, 218, 26, "#5B6683");
+  画比特举篮子(W / 2, 278, 1);
+}
+function 画游戏() {
+  ctx.fillStyle = 设置.背景颜色; ctx.fillRect(0, 0, W, H);
+  for (let i = 0; i < 46; i++) {   // 一闪一闪的小星星
+    ctx.globalAlpha = 0.35 + 0.65 * Math.abs(Math.sin((帧数 + i * 37) / 45));
+    ctx.fillStyle = "#FFFFFF"; ctx.fillRect((i * 197 + 31) % W, (i * 71 + 17) % 330 + 70, 3, 3);
+  }
+  ctx.globalAlpha = 1;
+  ctx.fillStyle = "#FFF3C4"; ctx.beginPath(); ctx.arc(110, 140, 34, 0, Math.PI * 2); ctx.fill();   // 弯弯的月亮
+  ctx.fillStyle = 设置.背景颜色; ctx.beginPath(); ctx.arc(126, 130, 30, 0, Math.PI * 2); ctx.fill();
+  ctx.fillStyle = "#2E3D63"; ctx.beginPath(); ctx.moveTo(0, H); ctx.lineTo(0, 500); ctx.quadraticCurveTo(W / 2, 468, W, 500); ctx.lineTo(W, H); ctx.closePath(); ctx.fill();
+
+  for (const 东西 of 天上) 画表情(东西.图案, 东西.x, 东西.y, 46);
+  if (护盾 > 0) { ctx.fillStyle = "rgba(91,224,255,0.25)"; ctx.beginPath(); ctx.arc(篮子X, 篮子Y + 40, 篮子宽() / 2 + 34, Math.PI, 0); ctx.fill(); }
+  画比特举篮子(篮子X, 篮子Y, 篮子宽() / 篮子本来宽);
+
+  // 上面：分数和金币、买过的东西、还剩几秒
+  画药丸(238, 14, 230);
+  画文字("⭐ " + 分数 + " 分    🪙 " + 金币, 353, 37, 22, "#1E2A4A");
+  const 买过的 = 商品表().filter(货 => 已买.includes(货.名字));
+  买过的.forEach((货, i) => 画表情(货.图案, 262 + i * 40, 86, 30));
+  const 秒 = Math.ceil(剩余帧数 / 60);
+  画药丸(W - 196, 14, 180, 秒 <= 5 && !时间到了 ? "#FFE1D2" : null);
+  画文字("⏰ 还剩 " + 秒 + " 秒", W - 106, 37, 22, "#1E2A4A");
+
+  if (时间到了) {
+    ctx.fillStyle = "rgba(20,28,52,0.6)"; ctx.fillRect(0, 0, W, H);
+    画文字("时间到！", W / 2, H / 2 - 30, 100, "#FFFFFF");
+    画文字("这局得了 " + 分数 + " 分", W / 2, H / 2 + 60, 34, "#FFE58A");
+  }
+}
+function 画结束画面() {
+  画浅色底();
+  ctx.fillStyle = "#F0E2CC"; 圆角矩形(W / 2 - 240, 96, 480, 300, 28);
+  ctx.fillStyle = "#FFFFFF"; 圆角矩形(W / 2 - 240, 90, 480, 300, 28);
+  画文字("这一局结束啦", W / 2, 140, 32, "#5B6683");
+  画文字("得分 " + 分数, W / 2, 228, 80, "#FF8A3D");
+  画文字("🪙 金币一共 " + 金币 + " 个", W / 2, 322, 32, "#1E2A4A");
+  画比特举篮子(122, 236, 1);
+  画表情("⭐", 840, 220, 64); 画表情("⭐", 880, 300, 40);
+}
+function 画商店() {
+  画浅色底();
+  画文字("🏪 商店", W / 2, 40, 40, "#1E2A4A");
+  画药丸(W - 216, 14, 200);
+  画文字("🪙 金币 " + 金币, W - 116, 37, 24, "#1E2A4A");
+  const 表 = 商品表();
+  if (!表.length) 画文字("商店里还没有东西卖", W / 2, 250, 32, "#8A93AB");
+  表.forEach((货, i) => {
+    const 卡 = 商品位置(i, 表.length), 大 = 卡.高 > 180, 买了 = 已买.includes(货.名字), 够钱 = 金币 >= 货.价钱;
+    ctx.fillStyle = "#F0E2CC"; 圆角矩形(卡.x, 卡.y + 6, 卡.宽, 卡.高, 22);
+    ctx.fillStyle = 买了 ? "#E3F7EE" : "#FFFFFF"; 圆角矩形(卡.x, 卡.y, 卡.宽, 卡.高, 22);
+    画表情(货.图案, 卡.x + 卡.宽 / 2, 卡.y + (大 ? 60 : 38), 大 ? 64 : 42);
+    画文字(货.名字, 卡.x + 卡.宽 / 2, 卡.y + (大 ? 122 : 82), 大 ? 28 : 22, "#1E2A4A");
+    if (大) 画文字(货.效果 || "（没写效果）", 卡.x + 卡.宽 / 2, 卡.y + 156, 18, "#8A93AB");
+    画文字(买了 ? "✔ 已买" : "🪙 " + 货.价钱, 卡.x + 卡.宽 / 2, 卡.y + 卡.高 - (大 ? 30 : 24), 大 ? 26 : 22, 买了 ? "#18A87C" : 够钱 ? "#FF8A3D" : "#B0B6C6");
+  });
+  if (表.length && 表.length <= 4) 画文字("点商品就能买，金币够才买得到", W / 2, 395, 20, "#8A93AB");
+}
+function 画按钮们() {
+  const 按钮们 = 这个画面的按钮(现在的画面);
+  按钮们.forEach((路, i) => {
+    const b = 按钮位置(现在的画面, i, 按钮们.length);
+    ctx.fillStyle = "#E0681C"; 圆角矩形(b.x - b.宽 / 2, b.y - b.高 / 2 + 5, b.宽, b.高, 20);
+    ctx.fillStyle = "#FF8A3D"; 圆角矩形(b.x - b.宽 / 2, b.y - b.高 / 2, b.宽, b.高, 20);
+    画文字(路.按, b.x, b.y, Math.max(16, Math.min(28, (b.宽 - 24) / Math.max(1, 路.按.length))), "#FFFFFF");
+  });
+}
+function 画现在在哪() {   // 左上角的小标签
+  画药丸(16, 14, 210);
+  ctx.fillStyle = "#FF8A3D"; ctx.beginPath(); ctx.arc(40, 37, 7, 0, Math.PI * 2); ctx.fill();
+  画文字("现在：" + 现在的画面, 130, 37, 22, "#1E2A4A");
+}
+
+// 每一帧都会运行一次
+function 游戏循环() {
+  帧数++;
+  if (现在的画面 === "游戏") 更新游戏();
+
+  if (现在的画面 === "开始画面") 画开始画面();
+  else if (现在的画面 === "结束画面") 画结束画面();
+  else if (现在的画面 === "商店") 画商店();
+  else 画游戏();
+  画按钮们();
+  画现在在哪();
+
+  // 飘字
+  for (const 字 of 飘字们) {
+    ctx.globalAlpha = 字.寿命 / 40; 画文字(字.文字, 字.x, 字.y, 30, 字.颜色); 字.y -= 1.2; 字.寿命--; ctx.globalAlpha = 1;
+  }
+  飘字们 = 飘字们.filter(字 => 字.寿命 > 0);
+
+  // 一句提示
+  if (话的寿命 > 0) {
+    话的寿命--;
+    ctx.globalAlpha = Math.min(1, 话的寿命 / 30);
+    ctx.fillStyle = "#E2CDA8"; 圆角矩形(W / 2 - 282, 74, 564, 60, 20);
+    ctx.fillStyle = "#FFFFFF"; 圆角矩形(W / 2 - 280, 76, 560, 56, 18);
+    画文字(话, W / 2, 104, 24, "#1E2A4A");
+    ctx.globalAlpha = 1;
+  }
+
+  requestAnimationFrame(游戏循环);
+}
+开始();
+游戏循环();
+</script>
+</body>
+</html>

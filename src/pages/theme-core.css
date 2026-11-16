@@ -1,0 +1,68 @@
+
+/* ================= 共用主题·核心（三端都有；tools/build.js 拼进页面，不要在 html 里直接改） ================= */
+/* ---------- 比特 ---------- */
+.bit{display:inline-block;position:relative}
+.bit svg{width:100%;height:auto;overflow:visible;display:block}
+.bit .b-tail{transform-origin:128px 158px}
+.bit .b-head{transform-origin:100px 66px;transition:transform .5s cubic-bezier(.3,1.4,.5,1)}
+.bit .b-legF{transform-origin:100px 180px}
+.bit .b-legB{transform-origin:100px 178px}
+.bit .b-all{transform-origin:100px 170px}
+.bit .b-ear,.bit .b-glow,.bit .b-pupils{transform-box:fill-box}
+.bit .b-ear{transform-origin:75% 10%}
+.bit .b-glow,.bit .b-pupils{transform-origin:50% 50%}
+.bit .b-eyes .sleep{display:none}
+.bit .b-sit{display:none}
+.bit.sitting .b-stand,.bit[data-act="坐下"] .b-stand{display:none}
+.bit.sitting .b-sit,.bit[data-act="坐下"] .b-sit{display:inline}
+.bit.sleepy .b-eyes .open{display:none} .bit.sleepy .b-eyes .sleep{display:inline}
+.bit.sleepy .b-glow{display:none}
+.bit.angry .b-pupils ellipse,.bit.angry .b-eyes .open>ellipse{fill:#FF5A5F}
+.bit.angry .b-mouth{transform:translateY(4px) scaleY(-1);transform-box:fill-box;transform-origin:50% 50%}
+.bit .b-cheek{opacity:0;transition:opacity .3s} .bit.shy .b-cheek{opacity:1}
+.bit .b-bubble{opacity:0;transition:opacity .2s}
+.bit.say .b-bubble{opacity:1}
+.bit.lookup .b-head{transform:rotate(-9deg)}
+.bit:not(.sleepy) .b-pupils{animation:kcBlink 4.6s infinite}
+.bit .b-ear{animation:kcEar 3.8s ease-in-out infinite}
+.bit .b-glow{animation:kcGlow 2.2s ease-in-out infinite}
+.bit.idle .b-tail{animation:wag 1.2s ease-in-out infinite}
+.bit.idle .b-all{animation:breathe 2.4s ease-in-out infinite}
+.bit.sleepy .b-all{animation:kcSnore 3.2s ease-in-out infinite}
+@keyframes wag{0%,100%{transform:rotate(-12deg)}50%{transform:rotate(18deg)}}
+@keyframes breathe{50%{transform:translateY(-3px)}}
+@keyframes kcBlink{0%,92%,100%{transform:scaleY(1)}95%{transform:scaleY(.12)}}
+@keyframes kcEar{0%,100%{transform:rotate(0)}50%{transform:rotate(-8deg)}}
+@keyframes kcGlow{50%{transform:scale(1.45);opacity:.06}}
+@keyframes kcSnore{50%{transform:scale(1.015,.985)}}
+.bit[data-act] .b-all{animation-duration:var(--d,.7s)!important;animation-iteration-count:1;animation-fill-mode:both;animation-timing-function:ease-in-out}
+.bit[data-act="站起来"] .b-all{animation-name:actStand}
+.bit[data-act="摇尾巴"] .b-tail{animation:wag calc(var(--d,.7s)/3) ease-in-out 3}
+.bit[data-act="转圈"] .b-all{animation-name:actSpin}
+.bit[data-act="趴下"] .b-all{animation-name:actLie}
+.bit[data-act="握手"] .b-legF{animation:actPaw var(--d,.7s) ease-in-out both}
+.bit[data-act="跳一跳"] .b-all{animation-name:actJump}
+.bit[data-act="鞠躬"] .b-all{animation-name:actBow}
+.bit[data-act="叫一声"] .b-head{animation:actBark var(--d,.7s) ease-in-out both}
+.bit[data-act="叫一声"] .b-bubble{opacity:1}
+@keyframes actSit{50%{transform:translateY(16px) scaleY(.86)}100%{transform:none}}
+@keyframes actStand{0%{transform:translateY(14px) scaleY(.88)}100%{transform:none}}
+@keyframes actSpin{100%{transform:rotate(360deg)}}
+@keyframes actLie{50%{transform:translateY(26px) scaleY(.7)}100%{transform:none}}
+@keyframes actPaw{50%{transform:rotate(-55deg)}100%{transform:none}}
+@keyframes actJump{45%{transform:translateY(-90px)}100%{transform:none}}
+@keyframes actBow{50%{transform:rotate(14deg) translateY(8px)}100%{transform:none}}
+@keyframes actBark{30%{transform:scale(1.12) rotate(-6deg)}60%{transform:scale(1.05)}100%{transform:none}}
+
+/* ---------- 代码精灵 ---------- */
+.gn-b,.gn-s{transform-box:fill-box;transform-origin:50% 50%}
+.gn-b{animation:kcFloat 3.2s ease-in-out infinite}
+.gn-s{animation:kcTwinkle 1.8s ease-in-out infinite}
+.gn-s.s2{animation-delay:-.6s}.gn-s.s3{animation-delay:-1.2s}
+.msg .gn-b,.chat .gn-b{animation:none}
+@keyframes kcFloat{50%{transform:translateY(-5%) rotate(-3deg)}}
+@keyframes kcTwinkle{50%{transform:scale(.55);opacity:.45}}
+
+@media (prefers-reduced-motion:reduce){
+  .bit .b-ear,.bit .b-glow,.bit .b-pupils,.gn-b,.gn-s{animation:none!important}
+}

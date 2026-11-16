@@ -1,0 +1,323 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, user-scalable=no">
+<title>抓虫子</title>
+<style>
+  html, body { margin: 0; height: 100%; background: #FFF7EC; font-family: "PingFang SC", "Microsoft YaHei", sans-serif; color: #1E2A4A; touch-action: manipulation; }
+  #box { height: 100%; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 10px; }
+  h1 { margin: 0; font-size: 28px; }
+  canvas { width: min(96vw, 160vh); max-height: 82vh; aspect-ratio: 16 / 9; border-radius: 18px; box-shadow: 0 6px 0 #F0E2CC; background: #9BD77E; }
+  p { margin: 0; color: #5B6683; font-size: 18px; }
+</style>
+</head>
+<body>
+<div id="box">
+  <h1>抓虫子</h1>
+  <canvas id="game" width="960" height="540"></canvas>
+  <p>虫子从洞里冒出来，快点它！</p>
+</div>
+
+<script>
+// ===== 游戏设置：想改游戏，先改这里 =====
+const 设置 = {
+  主角: "比特",            // 在旁边加油的主角；也可以换成表情，比如 "🐱"
+  天空颜色: "#BDE6FF",     // 上面天空的颜色
+  草地颜色: "#9BD77E",     // 草地的颜色
+  洞的行数: 2,             // 一共几排洞
+  洞的列数: 4,             // 每排几个洞
+  冒出间隔: 1,             // 每隔几秒冒出一个；数字越小，冒得越勤
+  停留时间: 1.5,           // 冒出来以后停几秒就缩回去；数字越小，越难抓
+  显示分数: false,         // 是否显示分数
+  倒计时: 0,               // 游戏时间（秒）；填 0 表示不限时
+  越来越快: false,         // 每得 5 分，冒得更勤、停得更短
+  加时间道具间隔: 10,      // 能加时间的道具（比如闹钟），最少隔几秒才出现一次
+};
+
+// ===== 洞里会冒出来的道具：只要你想得到，都可以加进来 =====
+// 图案：可以用画好的（毛毛虫、蚊子、蝴蝶、闹钟），也可以填任意表情，比如 "🐭"
+// 点到加几分：可以是负数，比如不能点的蝴蝶填 -3
+// 点到加几秒：点到以后，倒计时多几秒（要先打开倒计时）
+// 出现机会：数字越大，越常冒出来
+const 会冒出来的东西 = [
+  { 名字: "毛毛虫", 图案: "毛毛虫", 点到加几分: 1, 出现机会: 1 },
+];
+
+// ===== 画好的图案（想加新图案，可以直接用表情） =====
+const 画好的图案 = {
+  毛毛虫: '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 100 100"><g fill="#5BC236" stroke="#2F8A1E" stroke-width="3"><circle cx="50" cy="86" r="14"/><circle cx="53" cy="68" r="15"/><circle cx="49" cy="50" r="15"/></g><g fill="#2F8A1E"><circle cx="44" cy="88" r="3"/><circle cx="58" cy="70" r="3"/><circle cx="44" cy="52" r="3"/></g><circle cx="52" cy="28" r="19" fill="#7BD84E" stroke="#2F8A1E" stroke-width="3"/><path d="M45 11l-6-8M59 11l6-8" stroke="#2F8A1E" stroke-width="3" stroke-linecap="round"/><circle cx="38" cy="3" r="3.5" fill="#FFC93D"/><circle cx="66" cy="3" r="3.5" fill="#FFC93D"/><circle cx="45" cy="25" r="6" fill="#fff"/><circle cx="59" cy="25" r="6" fill="#fff"/><circle cx="46" cy="26" r="3" fill="#1E2A4A"/><circle cx="60" cy="26" r="3" fill="#1E2A4A"/><path d="M46 36q6 5 12 0" stroke="#1E2A4A" stroke-width="3" fill="none" stroke-linecap="round"/></svg>',
+  蚊子: '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 100 100"><g stroke="#3A3F55" stroke-width="3.4" stroke-linecap="round" stroke-linejoin="round" fill="none"><path d="M50 56L38 78L31 92"/><path d="M57 57L60 80L56 94"/><path d="M63 54L79 75L88 87"/></g><ellipse cx="40" cy="25" rx="19" ry="10" fill="#DCEEFF" stroke="#7AA9D6" stroke-width="2.5" transform="rotate(-40 40 25)"/><ellipse cx="55" cy="24" rx="21" ry="11" fill="#EAF5FF" stroke="#7AA9D6" stroke-width="2.5" transform="rotate(-18 55 24)"/><ellipse cx="29" cy="53" rx="25" ry="12" fill="#5B6178" transform="rotate(-12 29 53)"/><path d="M17 45l2 16M27 42l2 18M37 41l1 16" stroke="#fff" stroke-width="3.4" stroke-linecap="round"/><circle cx="56" cy="47" r="12" fill="#4A4F66"/><circle cx="71" cy="42" r="10" fill="#4A4F66"/><circle cx="74" cy="39" r="5" fill="#E5484D"/><path d="M78 47L98 61" stroke="#4A4F66" stroke-width="3.6" stroke-linecap="round"/></svg>',
+  蝴蝶: '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 100 100"><ellipse cx="29" cy="38" rx="23" ry="18" fill="#A066FF" transform="rotate(-25 29 38)"/><ellipse cx="71" cy="38" rx="23" ry="18" fill="#A066FF" transform="rotate(25 71 38)"/><ellipse cx="33" cy="66" rx="15" ry="13" fill="#FF6FA5"/><ellipse cx="67" cy="66" rx="15" ry="13" fill="#FF6FA5"/><circle cx="25" cy="35" r="6" fill="#fff" opacity=".85"/><circle cx="75" cy="35" r="6" fill="#fff" opacity=".85"/><circle cx="32" cy="68" r="4" fill="#FFC93D"/><circle cx="68" cy="68" r="4" fill="#FFC93D"/><rect x="46" y="28" width="8" height="48" rx="4" fill="#1E2A4A"/><circle cx="50" cy="24" r="6" fill="#1E2A4A"/><path d="M48 19Q42 8 35 7M52 19Q58 8 65 7" stroke="#1E2A4A" stroke-width="2.6" fill="none" stroke-linecap="round"/><circle cx="35" cy="7" r="3" fill="#1E2A4A"/><circle cx="65" cy="7" r="3" fill="#1E2A4A"/></svg>',
+  闹钟: '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 100 100"><path d="M32 86l-8 10M68 86l8 10" stroke="#B8333A" stroke-width="7" stroke-linecap="round"/><circle cx="26" cy="22" r="13" fill="#FFC93D" stroke="#D9A200" stroke-width="3"/><circle cx="74" cy="22" r="13" fill="#FFC93D" stroke="#D9A200" stroke-width="3"/><rect x="45" y="14" width="10" height="10" rx="3" fill="#B8333A"/><circle cx="50" cy="57" r="34" fill="#E5484D"/><circle cx="50" cy="57" r="26" fill="#fff"/><path d="M50 57V39M50 57l12 7" stroke="#1E2A4A" stroke-width="5" stroke-linecap="round"/><circle cx="50" cy="57" r="4" fill="#1E2A4A"/></svg>'
+};
+
+// ===== 下面是游戏程序 =====
+const canvas = document.getElementById("game");
+const ctx = canvas.getContext("2d");
+const W = canvas.width, H = canvas.height;
+
+let 状态 = "准备";            // "准备"、"玩"、"结束"
+let 分数 = 0, 剩余时间 = 设置.倒计时, 玩了几秒 = 0, 上次加时间道具 = -99;
+let 洞们 = [], 飘字们 = [], 计时 = 0, 跳一跳 = 0, 分数跳 = 0;
+
+// 把画好的图案变成图片
+const 图片们 = {};
+for (const 名字 in 画好的图案) {
+  const 图 = new Image();
+  图.src = "data:image/svg+xml;charset=utf-8," + encodeURIComponent(画好的图案[名字]);
+  图片们[名字] = 图;
+}
+
+// 按行数、列数排好洞的位置
+function 摆洞() {
+  洞们 = [];
+  const 最上 = 205, 最下 = H - 70;
+  for (let 行 = 0; 行 < 设置.洞的行数; 行++) {
+    for (let 列 = 0; 列 < 设置.洞的列数; 列++) {
+      const x = 60 + 680 * (列 + 0.5) / 设置.洞的列数;
+      const y = 设置.洞的行数 === 1 ? (最上 + 最下) / 2 : 最上 + (最下 - 最上) * 行 / (设置.洞的行数 - 1);
+      洞们.push({ x: x, y: y, 东西: null });
+    }
+  }
+}
+
+function 重新开始() {
+  分数 = 0;
+  剩余时间 = 设置.倒计时;
+  玩了几秒 = 0;
+  上次加时间道具 = -99;
+  计时 = 0;
+  飘字们 = [];
+  摆洞();
+  状态 = "玩";
+}
+
+// 按“出现机会”随机挑一个道具
+function 挑一个东西() {
+  // 能加时间的道具，最少隔一段时间才出现一次；不然手快的人能一直玩下去
+  let 能选的 = 会冒出来的东西.filter(东西 => !(东西.点到加几秒 && 设置.倒计时 > 0 && 玩了几秒 - 上次加时间道具 < 设置.加时间道具间隔));
+  if (能选的.length === 0) 能选的 = 会冒出来的东西;
+  let 总数 = 0;
+  for (const 东西 of 能选的) 总数 += 东西.出现机会 || 1;
+  let 随机 = Math.random() * 总数;
+  for (const 东西 of 能选的) {
+    随机 -= 东西.出现机会 || 1;
+    if (随机 <= 0) return 东西;
+  }
+  return 能选的[0];
+}
+
+// 越来越快：每得 5 分升一级，冒得更勤、停得更短
+function 难度() { return 设置.越来越快 ? Math.floor(Math.max(0, 分数) / 5) : 0; }
+function 当前间隔() { return Math.max(0.35, 设置.冒出间隔 * Math.pow(0.88, 难度())); }
+function 当前停留() { return Math.max(0.6, 设置.停留时间 * Math.pow(0.93, 难度())); }
+
+// 找一个空洞，让一个道具冒出来
+function 冒一个() {
+  const 空洞 = 洞们.filter(洞 => !洞.东西);
+  if (空洞.length === 0) return;
+  const 洞 = 空洞[Math.floor(Math.random() * 空洞.length)];
+  const 东西 = 挑一个东西();
+  if (东西.点到加几秒) 上次加时间道具 = 玩了几秒;
+  洞.东西 = Object.assign({ 已过: 0, 停留: 当前停留() }, 东西);
+}
+
+function 飘字(文字, x, y, 颜色) { 飘字们.push({ 文字, x, y, 颜色, 寿命: 45 }); }
+
+// 点到洞里的道具时，会发生什么
+function 点到(洞) {
+  const 东西 = 洞.东西;
+  洞.东西 = null;
+  const 分 = 东西.点到加几分 || 0;
+  分数 += 分;
+  if (分 !== 0) 分数跳 = 14;
+  if (设置.显示分数 && 分 !== 0) 飘字((分 > 0 ? "+" : "") + 分, 洞.x, 洞.y - 110, 分 > 0 ? "#18A87C" : "#E5484D");
+  if (!设置.显示分数) 飘字("抓到了！", 洞.x, 洞.y - 110, "#18A87C");
+  if (设置.倒计时 > 0 && 东西.点到加几秒) { 剩余时间 += 东西.点到加几秒; 飘字("+" + 东西.点到加几秒 + " 秒", 洞.x, 洞.y - 150, "#2366D1"); }
+  if (分 >= 0) 跳一跳 = 18;
+}
+
+// 点屏幕：开始 / 抓虫 / 重来
+canvas.addEventListener("pointerdown", e => {
+  if (状态 !== "玩") { 重新开始(); return; }
+  const r = canvas.getBoundingClientRect();
+  const x = (e.clientX - r.left) / r.width * W, y = (e.clientY - r.top) / r.height * H;
+  for (const 洞 of 洞们) {
+    if (洞.东西 && Math.abs(x - 洞.x) < 64 && y > 洞.y - 130 && y < 洞.y + 28) { 点到(洞); return; }
+  }
+});
+
+function 更新() {
+  if (状态 !== "玩") return;
+  计时 += 1 / 60;
+  玩了几秒 += 1 / 60;
+  if (计时 >= 当前间隔()) { 计时 = 0; 冒一个(); }
+  for (const 洞 of 洞们) {
+    if (!洞.东西) continue;
+    洞.东西.已过 += 1 / 60;
+    if (洞.东西.已过 >= 洞.东西.停留) 洞.东西 = null;   // 没抓到，缩回去了
+  }
+  if (设置.倒计时 > 0) {
+    剩余时间 -= 1 / 60;
+    if (剩余时间 <= 0) { 剩余时间 = 0; 状态 = "结束"; }
+  }
+}
+
+// ===== 画画 =====
+function 画背景() {
+  ctx.fillStyle = 设置.天空颜色; ctx.fillRect(0, 0, W, 120);
+  ctx.fillStyle = "#FFC93D"; ctx.beginPath(); ctx.arc(890, 58, 32, 0, Math.PI * 2); ctx.fill();
+  ctx.fillStyle = 设置.草地颜色; ctx.fillRect(0, 120, W, H - 120);
+  ctx.fillStyle = "rgba(0,0,0,0.07)";
+  for (let i = 0; i < 16; i++) 圆角矩形((i * 173) % 900 + 20, 140 + (i * 97) % 370, 28, 8, 4);
+}
+
+// 画一个图案：画好的就画图片，不然就当表情画
+function 画图案(图案, x, y, 大小) {
+  const 图 = 图片们[图案];
+  if (图) { if (图.complete) ctx.drawImage(图, x - 大小 / 2, y - 大小 / 2, 大小, 大小); }
+  else 画表情(图案, x, y, 大小 * 0.85);
+}
+
+function 画洞(洞) {
+  ctx.fillStyle = "#7A5230"; ctx.beginPath(); ctx.ellipse(洞.x, 洞.y, 68, 22, 0, 0, Math.PI * 2); ctx.fill();
+  ctx.fillStyle = "#3A2614"; ctx.beginPath(); ctx.ellipse(洞.x, 洞.y + 2, 56, 15, 0, 0, Math.PI * 2); ctx.fill();
+  if (洞.东西) {
+    // 冒出来、缩回去的动画
+    const t = 洞.东西.已过, 高 = Math.max(0, Math.min(1, t / 0.15, (洞.东西.停留 - t) / 0.15));
+    ctx.save();
+    ctx.beginPath(); ctx.rect(洞.x - 80, 洞.y - 170, 160, 170); ctx.clip();   // 只画洞口上面的部分
+    画图案(洞.东西.图案, 洞.x, 洞.y + 50 - 高 * 104, 112);
+    ctx.restore();
+  }
+  ctx.fillStyle = "#946A40"; ctx.beginPath(); ctx.ellipse(洞.x, 洞.y + 4, 68, 16, 0, 0, Math.PI); ctx.fill();
+}
+
+function 画比特(x, y, 大小) {
+  const s = 大小 / 100;
+  ctx.save(); ctx.translate(x, y); ctx.scale(s, s);
+  // 影子
+  ctx.fillStyle = "rgba(36,48,94,.16)"; ctx.beginPath(); ctx.ellipse(0, 54, 40, 6, 0, 0, Math.PI * 2); ctx.fill();
+  // 后腿
+  ctx.fillStyle = "#F4F6FA"; ctx.strokeStyle = "#C5CCD8"; ctx.lineWidth = 1.5;
+  [[-28, 20], [28, 20]].forEach(([lx, ly]) => { 圆角矩形(lx - 8, ly, 16, 26, 8); });
+  ctx.fillStyle = "#FF8A3D";
+  [[-28, 42], [28, 42]].forEach(([lx, ly]) => { 圆角矩形(lx - 10, ly, 20, 12, 5); });
+  // 尾巴
+  ctx.strokeStyle = "#FF8A3D"; ctx.lineWidth = 9; ctx.lineCap = "round";
+  ctx.beginPath(); ctx.moveTo(26, 8); ctx.quadraticCurveTo(44, 14, 40, 30); ctx.stroke();
+  // 身体
+  ctx.fillStyle = "#F4F6FA"; 圆角矩形(-34, -18, 68, 56, 22);
+  ctx.strokeStyle = "#C5CCD8"; ctx.lineWidth = 2; ctx.beginPath();
+  (function(x,y,w,h,r){ctx.moveTo(x+r,y);ctx.arcTo(x+w,y,x+w,y+h,r);ctx.arcTo(x+w,y+h,x,y+h,r);ctx.arcTo(x,y+h,x,y,r);ctx.arcTo(x,y,x+w,y,r);ctx.closePath();})(-34,-18,68,56,22); ctx.stroke();
+  // 橙心 </>
+  ctx.fillStyle = "#FF8A3D";
+  ctx.beginPath();
+  ctx.moveTo(0, 22); ctx.bezierCurveTo(-18, 8, -26, -4, -16, -12); ctx.bezierCurveTo(-10, -16, -4, -12, 0, -6);
+  ctx.bezierCurveTo(4, -12, 10, -16, 16, -12); ctx.bezierCurveTo(26, -4, 18, 8, 0, 22);
+  ctx.fill();
+  ctx.strokeStyle = "#fff"; ctx.lineWidth = 2.4; ctx.lineCap = "round"; ctx.lineJoin = "round";
+  ctx.beginPath(); ctx.moveTo(-9, -14); ctx.lineTo(-15, -8); ctx.lineTo(-9, -2); ctx.stroke();
+  ctx.beginPath(); ctx.moveTo(-2.5, -14); ctx.lineTo(2.5, -2); ctx.stroke();
+  ctx.beginPath(); ctx.moveTo(9, -14); ctx.lineTo(15, -8); ctx.lineTo(9, -2); ctx.stroke();
+  // 前腿
+  ctx.fillStyle = "#F4F6FA";
+  [[-16, 24], [16, 24]].forEach(([lx, ly]) => { 圆角矩形(lx - 7, ly, 14, 24, 7); });
+  ctx.fillStyle = "#FF8A3D";
+  [[-16, 44], [16, 44]].forEach(([lx, ly]) => { 圆角矩形(lx - 9, ly, 18, 11, 5); });
+  // 垂耳：从头两侧下垂的胶囊耳（正旋转=下垂；负旋转会变成翅耳）
+  ctx.fillStyle = "#FF8A3D";
+  ctx.beginPath(); ctx.ellipse(-48, -48, 13, 30, 0.35, 0, Math.PI * 2); ctx.fill();
+  ctx.beginPath(); ctx.ellipse(48, -48, 13, 30, -0.35, 0, Math.PI * 2); ctx.fill();
+  ctx.fillStyle = "#FFC08A";
+  ctx.beginPath(); ctx.ellipse(-48, -46, 6, 18, 0.35, 0, Math.PI * 2); ctx.fill();
+  ctx.beginPath(); ctx.ellipse(48, -46, 6, 18, -0.35, 0, Math.PI * 2); ctx.fill();
+  // 头
+  ctx.fillStyle = "#F4F6FA"; 圆角矩形(-40, -88, 80, 72, 30);
+  ctx.strokeStyle = "#C5CCD8"; ctx.lineWidth = 2; ctx.beginPath();
+  (function(x,y,w,h,r){ctx.moveTo(x+r,y);ctx.arcTo(x+w,y,x+w,y+h,r);ctx.arcTo(x+w,y+h,x,y+h,r);ctx.arcTo(x,y+h,x,y,r);ctx.arcTo(x,y,x+w,y,r);ctx.closePath();})(-40,-88,80,72,30); ctx.stroke();
+  ctx.fillStyle = "rgba(255,255,255,.55)"; ctx.beginPath(); ctx.ellipse(-14, -70, 16, 8, -0.3, 0, Math.PI * 2); ctx.fill();
+  // 黑面罩
+  ctx.fillStyle = "#141820"; ctx.beginPath(); ctx.ellipse(0, -52, 28, 22, 0, 0, Math.PI * 2); ctx.fill();
+  // 四角星星眼 ✦
+  ctx.fillStyle = "#5BE0FF";
+  for (const [ex, ey] of [[-12, -54], [12, -54]]) {
+    ctx.beginPath();
+    const outer = 9, inner = 9 * 0.38;
+    for (let i = 0; i < 8; i++) {
+      const a = -Math.PI / 2 + i * Math.PI / 4;
+      const rad = i % 2 === 0 ? outer : inner;
+      const x = ex + Math.cos(a) * rad, y = ey + Math.sin(a) * rad;
+      if (i === 0) ctx.moveTo(x, y); else ctx.lineTo(x, y);
+    }
+    ctx.closePath(); ctx.fill();
+  }
+  // 像素小嘴
+  [[-5, -40], [-1, -38], [3, -40]].forEach(([mx, my]) => { 圆角矩形(mx, my, 2.6, 2.2, 0.4); });
+  // 天线：橙底座 + 白杆 + 白球
+  ctx.fillStyle = "#FF8A3D"; ctx.beginPath(); ctx.ellipse(0, -88, 7, 4, 0, 0, Math.PI * 2); ctx.fill();
+  ctx.strokeStyle = "#F2F4F8"; ctx.lineWidth = 4; ctx.lineCap = "round";
+  ctx.beginPath(); ctx.moveTo(0, -88); ctx.lineTo(0, -104); ctx.stroke();
+  ctx.fillStyle = "#FFFFFF"; ctx.strokeStyle = "#D0D6E2"; ctx.lineWidth = 1;
+  ctx.beginPath(); ctx.arc(0, -106, 5.5, 0, Math.PI * 2); ctx.fill(); ctx.stroke();
+  ctx.restore();
+}
+function 圆角矩形(x, y, w, h, r) {
+  r = Math.min(r, w / 2, h / 2);
+  ctx.beginPath(); ctx.moveTo(x + r, y); ctx.arcTo(x + w, y, x + w, y + h, r); ctx.arcTo(x + w, y + h, x, y + h, r);
+  ctx.arcTo(x, y + h, x, y, r); ctx.arcTo(x, y, x + w, y, r); ctx.closePath(); ctx.fill();
+}
+function 画表情(文字, x, y, 大小) {
+  ctx.font = 大小 + 'px "Apple Color Emoji","Segoe UI Emoji","Noto Color Emoji",sans-serif';
+  ctx.fillStyle = "#000"; ctx.textAlign = "center"; ctx.textBaseline = "middle"; ctx.fillText(文字, x, y);
+}
+function 画文字(文字, x, y, 大小, 颜色, 对齐) {
+  ctx.fillStyle = 颜色; ctx.font = "bold " + 大小 + 'px "PingFang SC","Microsoft YaHei",sans-serif';
+  ctx.textAlign = 对齐 || "center"; ctx.textBaseline = "middle"; ctx.fillText(文字, x, y);
+}
+// 画一块圆角的牌子，用来显示分数和时间
+function 画牌子(文字, x, y, 底色, 字色, 放大) {
+  ctx.save(); ctx.translate(x, y); ctx.scale(放大, 放大);
+  ctx.font = 'bold 40px "PingFang SC","Microsoft YaHei",sans-serif';
+  const 宽 = ctx.measureText(文字).width + 52;
+  ctx.fillStyle = 底色; 圆角矩形(-宽 / 2, -32, 宽, 64, 32);
+  画文字(文字, 0, 2, 40, 字色);
+  ctx.restore();
+}
+
+function 画() {
+  画背景();
+  for (const 洞 of 洞们) 画洞(洞);
+  if (跳一跳 > 0) 跳一跳--;
+  if (分数跳 > 0) 分数跳--;
+  const 主角Y = H - 40 - Math.sin(跳一跳 / 18 * Math.PI) * 30;
+  if (设置.主角 === "比特") 画比特(W - 96, 主角Y, 100);
+  else 画表情(设置.主角, W - 96, 主角Y - 50, 96);
+  for (const 字 of 飘字们) {
+    ctx.globalAlpha = 字.寿命 / 45; 画文字(字.文字, 字.x, 字.y, 32, 字.颜色); 字.y -= 1.3; 字.寿命--; ctx.globalAlpha = 1;
+  }
+  飘字们 = 飘字们.filter(字 => 字.寿命 > 0);
+  if (状态 !== "准备") {
+    const 有时间 = 设置.倒计时 > 0;
+    if (设置.显示分数) 画牌子("分数 " + 分数, W / 2 - (有时间 ? 130 : 0), 60, "#FFFFFF", 分数 < 0 ? "#E5484D" : "#1E2A4A", 1 + Math.sin(分数跳 / 14 * Math.PI) * 0.18);
+    if (有时间) 画牌子("剩 " + Math.ceil(剩余时间) + " 秒", W / 2 + 140, 60, 剩余时间 <= 10 ? "#E5484D" : "#1E2A4A", "#FFFFFF", 1);
+  }
+  if (状态 === "准备") {
+    ctx.fillStyle = "rgba(30,42,74,0.35)"; ctx.fillRect(0, 0, W, H);
+    画文字("点一下，开始抓虫！", W / 2, H / 2, 54, "#FFFFFF");
+  }
+  if (状态 === "结束") {
+    ctx.fillStyle = "rgba(30,42,74,0.55)"; ctx.fillRect(0, 0, W, H);
+    画文字("时间到！", W / 2, H / 2 - 50, 64, "#FFFFFF");
+    if (设置.显示分数) 画文字("总分 " + 分数, W / 2, H / 2 + 20, 48, "#FFC93D");
+    画文字("点一下，再来一次", W / 2, H / 2 + 84, 30, "#FFFFFF");
+  }
+}
+
+function 游戏循环() { 更新(); 画(); requestAnimationFrame(游戏循环); }
+摆洞();
+游戏循环();
+</script>
+</body>
+</html>

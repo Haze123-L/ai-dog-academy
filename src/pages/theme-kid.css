@@ -1,0 +1,66 @@
+
+/* ================= 共用主题·孩子看的两端（大屏、平板）：场景、糖果按钮、卡片质感 ================= */
+:root{
+  --orange:#FF8A3D; --orange-d:#E3691E; --orange-l:#FFE6D3;
+  --blue:#4A92FF; --blue-d:#2A6EE0; --blue-l:#DEEBFF;
+  --green:#2DCF9B; --green-d:#16A579; --green-l:#D5F7EA;
+  --purple:#8E6CFF; --purple-d:#6A4BE6; --purple-l:#ECE5FF;
+  --yellow:#FFC83D; --yellow-l:#FFF2CC; --red:#F0545A; --pink:#FF7AB0;
+  --navy:#24305E; --muted:#5F6A8C; --cream:#FFF8EE; --line:#F1E3CC;
+  --lip:#EBD8BA; --drop:rgba(140,96,44,.13);
+  --gloss:linear-gradient(180deg,rgba(255,255,255,.26),rgba(255,255,255,0) 60%);
+  --candy:inset 0 3px 0 rgba(255,255,255,.32),inset 0 -3px 0 rgba(0,0,0,.1);
+  --sky:linear-gradient(180deg,#CBEAFF 0%,#E2F3FF 28%,#FFF7EB 62%,#FFF3E1 100%);
+  --night:linear-gradient(180deg,#161E4E 0%,#27347A 62%,#3A4A95 100%);
+  --clouds:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 1600 240'%3E%3Cg fill='white'%3E%3Cg opacity='.95' transform='translate(40 30)'%3E%3Ccircle cx='60' cy='70' r='40'/%3E%3Ccircle cx='118' cy='46' r='54'/%3E%3Ccircle cx='182' cy='72' r='38'/%3E%3Crect x='24' y='70' width='196' height='44' rx='22'/%3E%3C/g%3E%3Cg opacity='.75' transform='translate(520 74) scale(.6)'%3E%3Ccircle cx='60' cy='70' r='40'/%3E%3Ccircle cx='118' cy='46' r='54'/%3E%3Ccircle cx='182' cy='72' r='38'/%3E%3Crect x='24' y='70' width='196' height='44' rx='22'/%3E%3C/g%3E%3Cg opacity='.9' transform='translate(880 14) scale(.85)'%3E%3Ccircle cx='60' cy='70' r='40'/%3E%3Ccircle cx='118' cy='46' r='54'/%3E%3Ccircle cx='182' cy='72' r='38'/%3E%3Crect x='24' y='70' width='196' height='44' rx='22'/%3E%3C/g%3E%3Cg opacity='.7' transform='translate(1310 92) scale(.5)'%3E%3Ccircle cx='60' cy='70' r='40'/%3E%3Ccircle cx='118' cy='46' r='54'/%3E%3Ccircle cx='182' cy='72' r='38'/%3E%3Crect x='24' y='70' width='196' height='44' rx='22'/%3E%3C/g%3E%3C/g%3E%3C/svg%3E");
+  --hills:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 1600 200' preserveAspectRatio='none'%3E%3Cpath d='M0 96C180 40 360 46 540 86S900 110 1080 66 1420 62 1600 100V200H0Z' fill='%23E2F5DC'/%3E%3Cpath d='M0 150C220 104 430 116 640 136S1040 150 1240 118 1500 116 1600 128V200H0Z' fill='%23D0EFC8'/%3E%3C/svg%3E");
+  --sparks:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='360' height='300'%3E%3Cg opacity='.5'%3E%3Cpath d='M40 50l3 9 9 3-9 3-3 9-3-9-9-3 9-3z' fill='%23FFCF4A'/%3E%3Cpath d='M250 30l2 6 6 2-6 2-2 6-2-6-6-2 6-2z' fill='%23FF9CC4'/%3E%3Cpath d='M310 190l3 8 8 3-8 3-3 8-3-8-8-3 8-3z' fill='%23A9C9FF'/%3E%3Cpath d='M120 230l2 6 6 2-6 2-2 6-2-6-6-2 6-2z' fill='%23FFCF4A'/%3E%3Ccircle cx='190' cy='120' r='3' fill='%23FFB98A'/%3E%3Ccircle cx='70' cy='160' r='2.5' fill='%23A9C9FF'/%3E%3Ccircle cx='300' cy='90' r='2.5' fill='%23C7B4FF'/%3E%3C/g%3E%3C/svg%3E");
+  --stars:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='300' height='260'%3E%3Cg fill='white'%3E%3Ccircle cx='20' cy='30' r='1.6' opacity='.8'/%3E%3Ccircle cx='120' cy='60' r='1.2' opacity='.6'/%3E%3Ccircle cx='220' cy='20' r='2' opacity='.9'/%3E%3Ccircle cx='270' cy='140' r='1.4' opacity='.7'/%3E%3Ccircle cx='60' cy='190' r='1.8' opacity='.8'/%3E%3Ccircle cx='170' cy='230' r='1.2' opacity='.5'/%3E%3Ccircle cx='150' cy='150' r='1' opacity='.5'/%3E%3C/g%3E%3Cpath d='M90 110l2 6 6 2-6 2-2 6-2-6-6-2 6-2z' fill='%23FFE48A'/%3E%3Cpath d='M240 210l2 5 5 2-5 2-2 5-2-5-5-2 5-2z' fill='%23FFE48A' opacity='.8'/%3E%3C/svg%3E");
+  /* 原 repeating-conic 放射条纹已移除（易联想旭日旗）；保留柔和橙色变量供兜底 */
+  --burst:radial-gradient(circle at 50% 46%,#FFC08A 0%,#FF8A3D 55%,#F07828 100%);
+}
+.emoji{font-family:"Apple Color Emoji","Segoe UI Emoji","Noto Color Emoji",sans-serif}
+h1,h2,.h1,.h2,.t1,.t2,.t3{letter-spacing:.02em}
+
+/* ---------- 糖果按钮 ---------- */
+.btn{--bd:var(--orange-d);background:var(--gloss) var(--orange);box-shadow:var(--candy),0 5px 0 var(--bd),0 10px 18px rgba(36,48,94,.16);text-shadow:0 1px 1px rgba(0,0,0,.14);transition:transform .14s cubic-bezier(.3,1.6,.5,1),box-shadow .14s,filter .14s}
+.btn:hover{filter:brightness(1.04)}
+.btn:active{transform:translateY(4px) scale(.98);box-shadow:var(--candy),0 1px 0 var(--bd),0 3px 6px rgba(36,48,94,.14)}
+.btn.blue{--bd:var(--blue-d);background:var(--gloss) var(--blue)}
+.btn.green{--bd:var(--green-d);background:var(--gloss) var(--green)}
+.btn.purple{--bd:var(--purple-d);background:var(--gloss) var(--purple)}
+.btn.ghost{--bd:var(--lip);background:var(--gloss) #fff;color:var(--navy);text-shadow:none;box-shadow:inset 0 -3px 0 rgba(0,0,0,.04),0 5px 0 var(--bd),0 10px 18px rgba(140,96,44,.12)}
+.btn.ghost:active{box-shadow:0 1px 0 var(--bd),0 3px 6px rgba(140,96,44,.1)}
+
+/* ---------- 标签、胶囊 ---------- */
+.tag{box-shadow:inset 0 -2px 0 rgba(160,110,0,.1);font-weight:900}
+.tag svg{color:#E5A100}
+
+/* ---------- 输入框 ---------- */
+.inp,textarea.inp,.say-in,.spellin{border-color:#EEDCC0!important;box-shadow:inset 0 3px 0 rgba(36,48,94,.04);transition:border-color .15s,box-shadow .15s}
+.inp:focus,.say-in:focus,.spellin:focus,.saybar textarea:focus{outline:none;border-color:var(--orange)!important;box-shadow:0 0 0 5px rgba(255,138,61,.16)}
+
+/* ---------- 弹出、上浮 ---------- */
+@keyframes kcPop{0%{opacity:0;transform:scale(.6)}60%{opacity:1;transform:scale(1.06)}100%{transform:none}}
+@keyframes kcRise{from{opacity:0;transform:translateY(18px)}to{opacity:1;transform:none}}
+@keyframes kcBob{50%{transform:translateY(-10px)}}
+@keyframes kcDrift{to{transform:translateX(-50%)}}
+@keyframes kcSpin{to{transform:rotate(360deg)}}
+@keyframes kcWobble{0%,100%{transform:rotate(-3deg)}50%{transform:rotate(3deg)}}
+
+/* ---------- 浮岛（封面、平板等待页上比特站的地方） ---------- */
+.kc-island{position:relative;display:flex;flex-direction:column;align-items:center;animation:kcBob 4.2s ease-in-out infinite}
+.kc-island .bit{position:relative;z-index:2;margin-bottom:-6%}
+.kc-island .grass{position:relative;z-index:1;width:100%;height:clamp(18px,13%,46px);border-radius:50%;background:radial-gradient(120% 140% at 50% 0%,#8BE48A 0,#5FCF73 55%,#43B862 100%);box-shadow:inset 0 4px 0 rgba(255,255,255,.35)}
+.kc-island .rock{width:86%;height:clamp(30px,26%,96px);margin-top:-3%;border-radius:0 0 50% 50%/0 0 100% 100%;background:linear-gradient(180deg,#E6B486 0%,#CF9161 60%,#B9784C 100%);box-shadow:inset 0 -6px 0 rgba(0,0,0,.08)}
+.kc-island .rock::before{content:'';display:block;width:30%;height:22%;margin:10% 0 0 22%;border-radius:50%;background:rgba(255,255,255,.18)}
+.kc-shadow{width:60%;height:18px;border-radius:50%;background:radial-gradient(closest-side,rgba(36,48,94,.16),rgba(36,48,94,0));margin-top:10px;animation:kcShadow 4.2s ease-in-out infinite}
+@keyframes kcShadow{50%{transform:scaleX(.86);opacity:.7}}
+
+/* ---------- 闪光小星星（装饰） ---------- */
+.kc-star{position:absolute;width:var(--s,28px);height:var(--s,28px);pointer-events:none;animation:kcTwinkle 2.2s ease-in-out infinite;animation-delay:var(--dl,0s)}
+.kc-star svg{width:100%;height:100%;display:block}
+
+@media (prefers-reduced-motion:reduce){
+  .kc-island,.kc-shadow,.kc-star{animation:none!important}
+}

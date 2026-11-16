@@ -1,0 +1,252 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<title>AI 驯狗学院 · 打印物料</title>
+<style>
+@page { size: A4; margin: 0; }
+* { box-sizing: border-box; }
+html, body { margin: 0; background: #E9E4DA; font-family: "PingFang SC", "Microsoft YaHei", "Noto Sans SC", sans-serif; color: #1E2A4A; -webkit-print-color-adjust: exact; print-color-adjust: exact; }
+.tip { max-width: 210mm; margin: 16px auto; background: #fff; border-radius: 12px; padding: 14px 20px; font-size: 15px; line-height: 1.7; }
+.tip b { color: #E0681C; }
+.page { width: 210mm; height: 297mm; margin: 12px auto; background: #fff; padding: 10mm; display: grid; gap: 6mm; page-break-after: always; break-after: page; overflow: hidden; position: relative; }
+.page h2.ptitle { position: absolute; top: 3mm; left: 10mm; margin: 0; font-size: 10px; color: #B9A88E; font-weight: 600; }
+@media print { body { background: #fff; } .tip { display: none; } .page { margin: 0; box-shadow: none; } }
+.cut { border: 1.5px dashed #D9CBB3; border-radius: 6mm; position: relative; overflow: hidden; }
+.g2 { grid-template-rows: 1fr 1fr; }
+.g3 { grid-template-rows: 1fr 1fr 1fr; }
+.g4 { grid-template-columns: 1fr 1fr; grid-template-rows: 1fr 1fr; }
+.g6 { grid-template-columns: 1fr 1fr; grid-template-rows: 1fr 1fr 1fr; }
+.g8 { grid-template-columns: 1fr 1fr; grid-template-rows: repeat(4, 1fr); }
+.trick .say { font-size: 24px; font-weight: 900; line-height: 1.45; }
+.g12 { grid-template-columns: 1fr 1fr 1fr; grid-template-rows: repeat(4, 1fr); }
+.center { display: flex; flex-direction: column; align-items: center; justify-content: center; text-align: center; }
+.bit svg { width: 100%; height: auto; display: block; overflow: visible; }
+.blank { display: inline-block; min-width: 26mm; border-bottom: 2.5px solid #FF8A3D; margin: 0 2mm; height: 1.1em; vertical-align: -4px; }
+.lines div { border-bottom: 1.5px solid #E5D8C3; height: 11mm; }
+/* 护照 */
+.pass { padding: 7mm 9mm; display: flex; flex-direction: column; gap: 4mm; background: #FFF7EC; }
+.pass .hd { display: flex; align-items: center; gap: 5mm; }
+.pass .hd .bit { width: 30mm; flex: none; }
+.pass h3 { margin: 0; font-size: 24px; }
+.pass .sub { font-size: 13px; color: #5B6683; }
+.pass .field { font-size: 16px; font-weight: 700; display: flex; gap: 8mm; }
+.paws { display: grid; grid-template-columns: repeat(7, 1fr); gap: 2.5mm 2mm; margin-top: 1mm; }
+.paws .p { display: flex; flex-direction: column; align-items: center; gap: 1.5mm; font-size: 10.5px; font-weight: 700; color: #5B6683; text-align: center; }
+.paws .c { width: 19mm; height: 19mm; border-radius: 50%; border: 2px dashed #E1CBA8; background: #fff; display: flex; align-items: center; justify-content: center; }
+.paws .c svg { width: 10mm; height: 10mm; opacity: .12; }
+/* 卡片通用 */
+.card { padding: 6mm; display: flex; flex-direction: column; justify-content: center; gap: 3mm; }
+.card .k { font-size: 12px; font-weight: 800; letter-spacing: 1px; }
+.card .big { font-size: 27px; font-weight: 900; line-height: 1.6; }
+.card .big > div { white-space: nowrap; }
+.card .big .blank { min-width: 20mm; }
+.card .small { font-size: 13px; color: #5B6683; }
+.chip { display: inline-block; padding: 1mm 4mm; border-radius: 99px; font-size: 12px; font-weight: 800; color: #fff; }
+/* 举牌 */
+.paddle { color: #fff; display: flex; align-items: center; justify-content: center; font-size: 230px; font-weight: 900; border-radius: 8mm; }
+/* 证书 */
+.cert { border: 4mm solid #FF8A3D; border-radius: 10mm; padding: 16mm 18mm; display: flex; flex-direction: column; align-items: center; gap: 7mm; text-align: center; background: #FFF7EC; }
+.cert h1 { margin: 0; font-size: 46px; letter-spacing: 6px; }
+.cert p { margin: 0; font-size: 18px; line-height: 2; color: #1E2A4A; }
+.term { color: #2366D1; font-weight: 700; }
+</style>
+</head>
+<body>
+<div class="tip">
+  <b>打印说明</b>：用 A4 纸打印，缩放选「实际大小 / 100%」，勾选「背景图形」。虚线是裁切线。<br>
+  每页左上角写着用在哪节课。课堂上的答题、投星、角色卡、设计卡、口令表都在平板上做，纸质物料分两类：<b>必打</b>（护照、捣蛋卡、队伍牌、胜利贴纸、家长须知、证书）和<b>备用</b>（平板或网络出问题时用）。护照、抓虫报告单、讲稿卡、回家任务单、设计卡、家长须知按学生人数打印，其余每班一份即可。
+</div>
+<div id="pages"></div>
+<script>
+const BIT = `<svg viewBox="0 0 220 175"><ellipse cx="114" cy="160" rx="72" ry="8" fill="rgba(30,42,74,.12)"/><g transform="translate(0 0)"><rect x="66" y="112" width="16" height="44" rx="7" fill="#E0681C"/><rect x="88" y="112" width="16" height="44" rx="7" fill="#E0681C"/><rect x="132" y="112" width="16" height="44" rx="7" fill="#E0681C"/><rect x="152" y="112" width="16" height="44" rx="7" fill="#E0681C"/><path d="M64 88 Q40 78 44 52" stroke="#FF8A3D" stroke-width="11" fill="none" stroke-linecap="round"/><circle cx="44" cy="50" r="8" fill="#FFC93D"/><rect x="58" y="76" width="122" height="56" rx="26" fill="#FF8A3D"/><rect x="126" y="70" width="20" height="12" rx="4" fill="#2ECC9A"/><line x1="150" y1="22" x2="142" y2="6" stroke="#1E2A4A" stroke-width="5" stroke-linecap="round"/><circle cx="141" cy="5" r="7" fill="#FFC93D"/><rect x="128" y="20" width="80" height="66" rx="22" fill="#FF8A3D"/><rect x="138" y="30" width="60" height="42" rx="12" fill="#1E2A4A"/>EYES<rect x="120" y="34" width="13" height="30" rx="6" fill="#E0681C"/></g></svg>`;
+const EYES = {
+  normal: '<circle cx="156" cy="51" r="7" fill="#5BE0FF"/><circle cx="180" cy="51" r="7" fill="#5BE0FF"/>',
+  happy: '<path d="M149 55q7-10 14 0M173 55q7-10 14 0" stroke="#5BE0FF" stroke-width="4" fill="none" stroke-linecap="round"/>',
+  sleepy: '<path d="M149 53h14M173 53h14" stroke="#5BE0FF" stroke-width="4" stroke-linecap="round"/>',
+  angry: '<path d="M149 44l14 6M187 44l-14 6" stroke="#FF5A5F" stroke-width="4" stroke-linecap="round"/><circle cx="157" cy="56" r="6" fill="#FF5A5F"/><circle cx="179" cy="56" r="6" fill="#FF5A5F"/>',
+  shy: '<circle cx="156" cy="51" r="6" fill="#5BE0FF"/><circle cx="180" cy="51" r="6" fill="#5BE0FF"/><circle cx="146" cy="66" r="5" fill="#FF6FA5"/><circle cx="190" cy="66" r="5" fill="#FF6FA5"/>',
+  cool: '<rect x="144" y="44" width="22" height="13" rx="4" fill="#111"/><rect x="170" y="44" width="22" height="13" rx="4" fill="#111"/><path d="M166 49h4" stroke="#111" stroke-width="3"/><path d="M148 47l6 0" stroke="#fff" stroke-width="2" stroke-linecap="round" opacity=".6"/>',
+  scared: '<circle cx="156" cy="51" r="4" fill="#5BE0FF"/><circle cx="180" cy="51" r="4" fill="#5BE0FF"/><path d="M200 34q4 8 0 12q-4-4 0-12z" fill="#5BE0FF"/><path d="M160 64q8-4 16 0" stroke="#5BE0FF" stroke-width="3" fill="none" stroke-linecap="round"/>',
+  joke: '<path d="M149 55q7-10 14 0" stroke="#5BE0FF" stroke-width="4" fill="none" stroke-linecap="round"/><circle cx="180" cy="51" r="7" fill="#5BE0FF"/><path d="M160 63q8 7 16 0" stroke="#5BE0FF" stroke-width="3" fill="none" stroke-linecap="round"/>'
+};
+const bit = (w, eyes = 'normal', style = '') => `<div class="bit" style="width:${w};${style}">${BIT.replace('EYES', EYES[eyes])}</div>`;
+const PAW = '<svg viewBox="0 0 64 64" fill="#FF8A3D"><path d="M32 4l8.5 17.5L60 24l-14 13.5L49 57 32 47.8 15 57l3-19.5L4 24l19.5-2.5z"/></svg>';
+const WAND = '<svg viewBox="0 0 64 64" style="width:12mm;height:12mm"><path d="M10 54L40 24" stroke="#1E2A4A" stroke-width="7" stroke-linecap="round"/><path d="M46 6l3 9 9 3-9 3-3 9-3-9-9-3 9-3z" fill="#FFC93D"/></svg>';
+const B = '<span class="blank"></span>';
+const fill = t => t.replace(/___/g, B);
+const P = (cls, title, inner) => `<div class="page ${cls}"><h2 class="ptitle">${title}</h2>${inner}</div>`;
+const pages = [];
+
+// 1. 驯狗师护照（每人 1 张）
+const badges = [['体验课', '见习驯狗师'], ['第 1 节', '精灵召唤师'], ['第 2 节', '数值设计师'], ['第 3 节', '抓虫侦探'], ['第 4 节', '比特设计师'], ['第 5 节', '入门驯狗师'], ['第 6 节', '游戏策划师'], ['第 7 节', '操控大师'], ['第 8 节', '规则设计师'], ['第 9 节', '关卡设计师'], ['第 10 节', '编舞师'], ['第 11 节', '口令训练师'], ['第 12 节', '金牌驯狗师']];
+const passport = `<div class="cut pass"><div class="hd">${bit('30mm')}<div><h3>驯狗师护照</h3><div class="sub">AI 驯狗学院 · 每节课盖一个章</div></div></div>
+  <div class="field"><span>姓名 ${B}</span><span>队伍 ${B}</span></div>
+  <div class="paws">${badges.map(([n, b]) => `<div class="p"><div class="c">${PAW}</div>${n}<br>${b}</div>`).join('')}</div>
+  <div class="sub" style="margin-top:auto">第 4 节：领养自己的狗 · 第 5 节：入门驯狗师 · 集齐 12 个章：第一季度金牌驯狗师</div></div>`;
+pages.push(P('g2', '护照 · 每人 1 张 · 体验课起用', passport + passport));
+
+// 2. 灵感卡（备用：平板上的翻卡已经有，这里是纸质版。只给方向，不规定怎么说）
+const ideas = [
+  ['#FF8A3D', '体验课', '天上还能掉什么？', '接到它，会发生什么？'],
+  ['#3D8BFF', '第 1 节', '比特还能有什么本领？', '激光？二段跳？你说了算'],
+  ['#2ECC9A', '第 1 节', '跑道上还能有什么？', '能吃的？要跳的？会动的？'],
+  ['#8B6CFF', '第 2 节', '游戏里什么会变？', '分数、时间、速度……还有呢？'],
+  ['#E0681C', '第 3 节', '游戏哪里不对劲？', '我做了什么、想要什么、结果却怎样'],
+  ['#FF6FA5', '第 4 节', '你想让比特是谁？', '它会怎么说话？怕什么？爱什么？']
+];
+const ideas2 = [
+  ['#8B6CFF', '第 6 节', '你的游戏，主角是谁？', '在哪儿？碰到什么会怎样？'],
+  ['#3D8BFF', '第 7 节', '怎么指挥你的主角？', '按键？点屏幕？拖着走？'],
+  ['#2ECC9A', '第 8 节', '碰到了，会发生什么？', '加分？变慢？少一条命？'],
+  ['#FF6FA5', '第 9 节', '第二关哪里更难？', '更多？更快？时间更少？'],
+  ['#FF8A3D', '第 10 节', '你想让它跳什么舞？', '先做什么、再做什么、重复几遍？'],
+  ['#E0681C', '第 11 节', '你想让它听懂哪句话？', '听到以后做什么、说什么？']
+];
+const ideaCard = ([c, k, q, h]) => `<div class="cut card" style="border-color:${c}"><div style="display:flex;align-items:center;gap:3mm">${WAND}<span class="chip" style="background:${c}">灵感卡 · ${k}</span></div><div class="big" style="font-size:30px">${q}</div><div style="font-size:17px;font-weight:700;color:#5B6683;line-height:1.5">${h}</div></div>`;
+pages.push(P('g6', '灵感卡 · 第 6–11 节 · 备用 · 只给方向，想到什么就说什么', ideas2.map(ideaCard).join('')));
+pages.push(P('g6', '灵感卡 · 备用 · 8–10 岁每人 1 套 · 只给方向，想到什么就说什么', ideas.map(([c, k, q, h]) => `<div class="cut card" style="border-color:${c}"><div style="display:flex;align-items:center;gap:3mm">${WAND}<span class="chip" style="background:${c}">灵感卡 · ${k}</span></div><div class="big" style="font-size:30px">${q}</div><div style="font-size:17px;font-weight:700;color:#5B6683;line-height:1.5">${h}</div></div>`).join('')));
+
+// 2b. 高手挑战卡（三档任务都做完的同学抽一张）
+const pros = [
+  ['第 1 节', '比特跑酷', '让比特吃到一样东西以后，<br>5 秒内跑得飞快'],
+  ['第 1 节', '比特跑酷', '加一种会动的东西：<br>一会儿高，一会儿低'],
+  ['第 2 节', '抓虫子', '加一个「双倍」道具：<br>点到它，10 秒内每只虫子 +2'],
+  ['第 2 节', '抓虫子', '游戏结束时，<br>显示「最高分 ___」'],
+  ['第 3 节', '抓虫', '分数高时夸一句，<br>分数低时鼓励一句'],
+  ['第 4 节', '角色卡', '给比特一个秘密暗号：<br>听到它，就转圈再叫一声']
+];
+const pros2 = [
+  ['第 6 节', '我的游戏', '加一个「开始画面」：<br>写着游戏名字和怎么玩'],
+  ['第 7 节', '比特回家', '加一个传送门：<br>走进去，从另一个门出来'],
+  ['第 8 节', '比特回家', '加一个「无敌星」：<br>吃到后 5 秒碰到猫也不扣命'],
+  ['第 9 节', '我的游戏', '第三关换一个背景，<br>还多一样新东西'],
+  ['第 10 节', '编舞', '开头鞠躬，中间转圈重复 3 次，<br>最后谢幕'],
+  ['第 11 节', '口令表', '加一条口令：<br>听到「猜谜」，就出一个谜语']
+];
+const proCard = ([n, g, t]) => `<div class="cut card" style="border-color:#E5A100;background:#FFF9E8"><div style="display:flex;align-items:center;gap:3mm"><span style="font-size:24px;color:#E5A100;letter-spacing:1px">★★★</span><span class="chip" style="background:#E5A100">高手挑战 · ${n} · ${g}</span></div><div class="big" style="font-size:23px">${t.split('<br>').map(l => `<div>${fill(l)}</div>`).join('')}</div><div class="small">做出来了？举手请老师来看</div></div>`;
+pages.push(P('g6', '高手挑战卡 · 第 6–11 节 · ★★★ 都做完的同学抽一张', pros2.map(proCard).join('')));
+pages.push(P('g6', '高手挑战卡 · 第 1–4 节 · ★★★ 都做完的同学抽一张', pros.map(([n, g, t]) => `<div class="cut card" style="border-color:#E5A100;background:#FFF9E8"><div style="display:flex;align-items:center;gap:3mm"><span style="font-size:24px;color:#E5A100;letter-spacing:1px">★★★</span><span class="chip" style="background:#E5A100">高手挑战 · ${n} · ${g}</span></div><div class="big" style="font-size:23px">${t.split('<br>').map(l => `<div>${fill(l)}</div>`).join('')}</div><div class="small">做出来了？举手请老师来看</div></div>`).join('')));
+
+// 3. 抓虫报告单（第 3 节，每人 2 张）
+const report = `<div class="cut card" style="padding:8mm 10mm;gap:4mm"><div style="display:flex;justify-content:space-between;align-items:center"><div style="font-size:26px;font-weight:900">抓虫报告</div><span class="chip" style="background:#8B6CFF">第 3 节 · 调试 Debug</span></div>
+  <div class="big" style="font-size:20px">我做了 ${B}${B}</div><div class="big" style="font-size:20px">我想要 ${B}${B}</div><div class="big" style="font-size:20px">结果却 ${B}${B}</div>
+  <div class="big" style="font-size:20px">我对精灵说 ${B}${B}${B}</div>
+  <div style="font-size:18px;font-weight:800">抓住了吗？ □ 抓住了　□ 还在跑</div></div>`;
+pages.push(P('g2', '抓虫报告单 · 第 3 节 · 每人 2 张', report + report));
+// 3b. 捣蛋卡（第 3 节，每 2 人至少 1 张）
+const BUGI = '<svg viewBox="0 0 64 64" style="width:11mm;height:11mm;flex:none"><ellipse cx="32" cy="38" rx="20" ry="17" fill="#2ECC9A"/><circle cx="25" cy="34" r="6" fill="#fff"/><circle cx="39" cy="34" r="6" fill="#fff"/><circle cx="26" cy="35" r="3" fill="#1E2A4A"/><circle cx="38" cy="35" r="3" fill="#1E2A4A"/><path d="M24 22q-4-10-10-12M40 22q4-10 10-12" stroke="#2ECC9A" stroke-width="4" fill="none" stroke-linecap="round"/><path d="M26 45q6 4 12 0" stroke="#1E2A4A" stroke-width="3" fill="none" stroke-linecap="round"/></svg>';
+const trickCards = ['把「跳跃力气」改成 5', '把「重力」改成 0.1', '把「奔跑速度」改成 25', '把「主角大小」改成 250', '让路上要跳的东西隐形', '碰到要跳的东西，<br>比特不会撞倒', '点屏幕的时候，比特不要跳', '要跳的东西画成电池，<br>碰到还是会撞倒'];
+pages.push(P('g8', '捣蛋卡 · 第 3 节 · 每班 2 套，剪开后抽签', trickCards.map(t => `<div class="cut card trick" style="border-color:#8B6CFF;padding:5mm 7mm;gap:2.5mm"><div style="display:flex;align-items:center;gap:3mm">${BUGI}<span class="chip" style="background:#8B6CFF">捣蛋卡 · 第 3 节</span></div><div class="say">${t}</div><div class="small">对精灵说这句话，再和同桌交换平板</div></div>`).join('')));
+
+
+// 4. 角色卡工作单（第 4 节 · 备用：平板坏了时，先在纸上设计，再请老师或组员帮忙输入）
+const chipRow = list => `<div style="display:flex;flex-wrap:wrap;gap:2.5mm">${list.map(x => `<span style="border:1.5px solid #E1CBA8;border-radius:99px;padding:1mm 4mm;font-size:15px;font-weight:800">${x}</span>`).join('')}</div>`;
+const rcard = `<div class="cut card" style="padding:7mm 10mm;gap:3.2mm;justify-content:flex-start"><div style="display:flex;justify-content:space-between;align-items:center"><div style="font-size:26px;font-weight:900">我的狗的角色卡</div><span class="chip" style="background:#FF8A3D">第 4 节 · 系统提示词 System Prompt</span></div>
+  <div style="font-size:18px;font-weight:800">名字 ${B}　　它是我的 ${B}</div>
+  <div style="font-size:15px;font-weight:800;color:#5B6683">身份可以圈一个，也可以自己写</div>${chipRow(['好朋友', '宠物狗', '冒险伙伴', '小老师', '保镖'])}
+  <div style="font-size:15px;font-weight:800;color:#5B6683">性格（圈一个）</div>${chipRow(['活泼', '害羞', '爱讲笑话', '酷酷的', '温柔', '胆小'])}
+  <div style="font-size:18px;font-weight:800">还想让它是什么样 ${B}${B}${B}</div>
+  <div style="font-size:18px;font-weight:800">说话的样子 ${B}${B}　口头禅 ${B}</div>
+  <div style="font-size:15px;font-weight:800;color:#5B6683">声音（圈一个）</div>${chipRow(['可爱', '奶声奶气', '低沉', '机器人', '正常'])}
+  <div style="font-size:18px;font-weight:800">★★★ 规则：听到 / 看到 ${B}，就 ${B}</div></div>`;
+pages.push(P('g2', '角色卡工作单 · 第 4 节 · 备用（平板坏了时先写在纸上）', rcard + rcard));
+
+// 5. 性格卡（第 4 节「猜性格」· 单机模式或没连平板时，每组抽一张，别给其他组看）
+const traits = [['活泼', '#FF8A3D', 'happy'], ['害羞', '#FF6FA5', 'shy'], ['爱讲笑话', '#2ECC9A', 'joke'], ['酷酷的', '#1E2A4A', 'cool'], ['温柔', '#8B6CFF', 'happy'], ['胆小', '#3D8BFF', 'scared']];
+pages.push(P('g6', '性格卡 · 第 4 节「猜性格」· 备用（没连平板时每人抽一张，别给别人看）', traits.map(([n, c, e]) => `<div class="cut center" style="background:${c}18;border-color:${c};gap:3mm">${bit('44mm', e)}<div style="font-size:40px;font-weight:900;color:${c}">${n}</div></div>`).join('')));
+
+// 6. 举牌 A–D（每人 1 套，或每队 1 套）
+pages.push(P('g4', '举牌 · 备用（答题在平板上；平板连不上时每队 1 套）', [['A', '#FF8A3D'], ['B', '#3D8BFF'], ['C', '#2ECC9A'], ['D', '#8B6CFF']].map(([l, c]) => `<div class="paddle" style="background:${c}">${l}</div>`).join('')));
+
+// 9. 发布会讲稿卡（第 5 节）
+const speech = `<div class="cut card" style="padding:10mm 12mm;gap:6mm"><div style="display:flex;justify-content:space-between;align-items:center"><div style="font-size:28px;font-weight:900">发布会讲稿</div><span class="chip" style="background:#FF6FA5">第 5 节</span></div>
+  <div class="big">1　我的游戏叫 ${B}${B}</div><div class="big">2　我跟精灵说的第一句话是 ${B}</div><div class="big">3　我修好的一个虫子是 ${B}${B}</div></div>`;
+pages.push(P('g2', '讲稿卡 · 第 5 节 · 每人 1 张', speech + speech));
+
+// 9b. 回家任务单（第 4 节结束发，每人 1 张）
+const homework = `<div class="cut card" style="padding:9mm 12mm;gap:4.5mm"><div style="display:flex;justify-content:space-between;align-items:center"><div style="font-size:28px;font-weight:900">回家任务：做一个你想玩的游戏</div><span class="chip" style="background:#FF8A3D">第 4 节 → 第 5 节</span></div>
+  <div class="big" style="font-size:22px">我想做的游戏 ${B}${B}</div><div class="big" style="font-size:22px">玩法是 ${B}${B}${B}</div><div class="big" style="font-size:22px">我对精灵说的第一句话 ${B}${B}</div><div class="big" style="font-size:22px">我修好的一个虫子 ${B}${B}</div>
+  <div class="small" style="font-size:14px;line-height:1.6">第 5 节把游戏带来，大家一起玩。<br>给家长：请用家长账号登录编程台，陪孩子做 20–30 分钟；让孩子自己说、自己试，家长不替他打字。</div></div>`;
+pages.push(P('g2', '回家任务单 · 第 4 节结束发 · 每人 1 张', homework + homework));
+
+// 9c. 游戏设计卡（第 6 节 · 每人 1 张：先画草图、想清楚四块，再填平板）
+const dz = (tag, c, q) => `<div style="display:flex;gap:3mm;align-items:baseline"><span class="chip" style="background:${c};flex:none">${tag}</span><div style="flex:1;font-size:16px;font-weight:800">${q}<div style="border-bottom:1.5px solid #E5D8C3;height:9mm"></div><div style="border-bottom:1.5px solid #E5D8C3;height:9mm"></div></div></div>`;
+pages.push(P('', '游戏设计卡 · 第 6 节 · 每人 1 张（先在纸上画、想，再填到平板上）', `<div class="cut card" style="padding:9mm 11mm;gap:4mm;justify-content:flex-start">
+  <div style="display:flex;justify-content:space-between;align-items:center"><div style="font-size:30px;font-weight:900">我的游戏设计卡</div><span class="chip" style="background:#8B6CFF">第 6 节 · 拆解 Decomposition</span></div>
+  <div style="font-size:20px;font-weight:800">游戏名字 ${B}${B}　设计师 ${B}</div>
+  <div style="font-size:15px;font-weight:800;color:#5B6683">先画草图：主角在哪？狗窝、终点、敌人、宝贝在哪？</div>
+  <div style="height:88mm;border:2px dashed #E1CBA8;border-radius:5mm;background:#FFFCF6"></div>
+  ${dz('角色', '#FF8A3D', '主角是谁？在什么地方？')}${dz('规则', '#3D8BFF', '怎么玩？碰到什么会怎样？')}${dz('得分', '#2ECC9A', '怎么得分？怎么算赢？')}${dz('结束', '#8B6CFF', '什么时候结束？')}${dz('还有', '#FF6FA5', '还想加什么？')}
+</div>`));
+
+// 9f. 口令表（第 11 节 · 备用；也可以带回家继续写）
+const cmdRow = i => `<tr><td style="font-weight:900;color:#C9B79A">${i}</td><td></td><td></td><td></td></tr>`;
+pages.push(P('', '口令表 · 第 11 节 · 备用（平板坏了先写在纸上）· 也可以带回家接着写', `<div class="cut card" style="padding:10mm 11mm;gap:5mm;justify-content:flex-start">
+  <div style="display:flex;justify-content:space-between;align-items:center"><div style="font-size:30px;font-weight:900">我的狗的口令表</div><span class="chip" style="background:#3D8BFF">第 11 节 · 事件 + 条件</span></div>
+  <div style="font-size:20px;font-weight:800">狗的名字 ${B}　主人 ${B}</div>
+  <table style="width:100%;border-collapse:collapse;font-size:18px" border="1" bordercolor="#E5D8C3"><thead><tr style="background:#EAF2FF"><th style="width:10mm;padding:3mm"></th><th style="padding:3mm">听到这句话</th><th style="padding:3mm">做什么动作</th><th style="padding:3mm">说什么</th></tr></thead>
+  <tbody>${[1, 2, 3, 4, 5, 6].map(cmdRow).join('').replace(/<td><\/td>/g, '<td style="height:20mm"></td>')}</tbody></table>
+  <div style="font-size:15px;font-weight:700;color:#5B6683;line-height:1.7">动作可以选：站起来、坐下、趴下、摇尾巴、转圈、握手、跳一跳、鞠躬、叫一声<br>口令要短、好念，不要两条口令听起来很像（比如「晚安」和「早安」）</div></div>`));
+
+// 9g. 家长须知（第 4 节领养日带回家）
+pages.push(P('', '家长须知 · 第 4 节领养日 · 每人 1 张带回家', `<div class="cut card" style="padding:11mm 13mm;gap:5mm;justify-content:flex-start;font-size:16px;line-height:1.8">
+  <div style="display:flex;align-items:center;gap:6mm">${bit('34mm', 'happy')}<div><div style="font-size:30px;font-weight:900">家长须知：孩子有了一只 AI 小狗</div><div style="font-size:15px;color:#5B6683">AI 驯狗学院 · 第 4 节领养日</div></div></div>
+  <div><b style="font-size:18px">孩子今天学会了</b><br>给自己的 AI 小狗起名字，写一张「角色卡」（专业名字叫系统提示词），让它用孩子设计的性格说话。小狗住在课堂平板和编程台里，不是实体玩具。</div>
+  <div><b style="font-size:18px">在家守则（请和孩子一起读）</b><br>① 爸妈在旁边：在家跟小狗、跟代码精灵聊天时，请家长在场。② 不说秘密：家庭住址、电话、密码、学校班级，都不告诉它。③ 玩多久说好：时间到就关掉，明天再聊。</div>
+  <div><b style="font-size:18px">关于声音和网络</b><br>小狗的大脑是联网的大模型：孩子说的话会传到云端生成回答。它会听错、会说错，这很正常——请鼓励孩子「换个说法再试」，并告诉孩子：它说的不一定都对。</div>
+  <div><b style="font-size:18px">在家可以继续做</b><br>孩子回家还要做一个自己想玩的游戏，第 5 节带来（用课堂账号登录编程台）；也可以继续改小狗的角色卡。第 10 节给小狗编舞，第 11 节教它听口令，第 12 节请家长来看发布会。</div>
+  <div style="margin-top:auto;font-size:16px;font-weight:800;white-space:nowrap">孩子 ${B}　　家长签字 ${B}　　日期 ${B}</div></div>`));
+
+// 9h. 季度发布会讲稿卡（第 12 节）
+const speech12 = `<div class="cut card" style="padding:10mm 12mm;gap:6mm"><div style="display:flex;justify-content:space-between;align-items:center"><div style="font-size:28px;font-weight:900">季度发布会讲稿</div><span class="chip" style="background:#8B6CFF">第 12 节</span></div>
+  <div class="big" style="font-size:24px">1　我做了一个什么游戏，怎么玩 ${B}${B}</div><div class="big" style="font-size:24px">2　我的狗叫 ${B}，它会 ${B}</div><div class="big" style="font-size:24px">3　这一季我最得意的一件事 ${B}</div></div>`;
+pages.push(P('g2', '讲稿卡 · 第 12 节季度发布会 · 每人 1 张', speech12 + speech12));
+
+// 10. 队伍牌（对折立在桌上）
+const half = (n, c, rot) => `<div class="center" style="${rot ? 'transform:rotate(180deg);' : ''}background:${c};color:#fff;gap:4mm;padding:6mm"><div style="font-size:30px;font-weight:900;opacity:.9">${n}</div><div style="width:150mm;height:34mm;border-radius:6mm;background:#fff;display:flex;align-items:flex-end;justify-content:center;padding-bottom:3mm;color:#C9B79A;font-size:14px">在这里写队名</div></div>`;
+const tent = (n, c) => `<div class="cut" style="display:grid;grid-template-rows:1fr 1fr;border-color:${c}">${half(n, c, true)}<div style="border-top:1.5px dashed #fff;display:grid">${half(n, c, false)}</div></div>`;
+pages.push(P('g2', '队伍牌 · 写上队名，沿中线对折立在桌上', tent('橙队', '#FF8A3D') + tent('蓝队', '#3D8BFF')));
+
+// 胜利贴纸（可打印在 A4 不干胶上，每节课发给胜利队）
+const sticker = (t, c) => `<div class="center" style="border-radius:50%;border:2.5px solid ${c};background:${c}18;gap:1mm;aspect-ratio:1;width:40mm;margin:auto">${PAW.replace('<svg', '<svg style="width:15mm"').replace('#FF8A3D', c)}<div style="font-size:16px;font-weight:900;color:${c}">${t}</div></div>`;
+pages.push(P('', '胜利贴纸 · 打印在 A4 不干胶上，沿圆形剪下', `<div style="display:grid;grid-template-columns:repeat(4,1fr);grid-auto-rows:1fr;gap:4mm;height:100%">${Array.from({ length: 12 }, () => sticker('本节胜利队', '#FF8A3D')).join('')}${Array.from({ length: 4 }, () => sticker('首月冠军', '#E5A100')).join('')}${Array.from({ length: 4 }, () => sticker('第二个月冠军', '#8B6CFF')).join('')}</div>`));
+
+// 星星贴纸（作品墙、试玩大会：给最想再玩一次的作品贴一颗）
+const star = `<div class="center" style="gap:1mm">${PAW.replace('<svg', '<svg style="width:19mm"').replace('#FF8A3D', '#FFC93D')}<div style="font-size:11px;font-weight:800;color:#B98A00">想再玩一次</div></div>`;
+pages.push(P('', '星星贴纸 · 可选（投星已在平板上）· 想发实物时打印在 A4 不干胶上', `<div style="display:grid;grid-template-columns:repeat(6,1fr);grid-template-rows:repeat(9,1fr);gap:2mm;height:100%">${star.repeat(54)}</div>`));
+
+// 11. 体验证（体验课）
+const trial = `<div class="cut center" style="background:#FFF7EC;gap:4mm;padding:8mm">${bit('46mm', 'happy')}<div style="font-size:36px;font-weight:900;letter-spacing:4px">见习驯狗师</div>
+  <div style="font-size:18px;line-height:1.9">${B}${B} 同学<br>在 AI 驯狗学院体验课上，用自己的话（<span class="term">提示词 Prompt</span>）<br>指挥代码精灵，改出了自己的第一个游戏。</div>
+  <div style="font-size:14px;color:#5B6683">AI 驯狗学院　　日期 ${B}</div></div>`;
+pages.push(P('g2', '体验证 · 体验课结束发', trial + trial));
+
+// 12. 结业证书（第 5 节）
+pages.push(P('', '入门驯狗师证书 · 第 5 节（假期入门营结业用；季度班到第 12 节发季度证书）', `<div class="cert">${bit('70mm', 'happy')}<h1>入门驯狗师证书</h1>
+  <p><span class="blank" style="min-width:60mm"></span> 同学</p>
+  <p>在 AI 驯狗学院完成了入门 5 节课程，学会了：<br>
+  用自己的话（<span class="term">提示词 Prompt</span>）指挥代码精灵改游戏，<br>
+  用变量（<span class="term">Variable</span>）给游戏加上分数和时间，<br>
+  用抓虫报告（<span class="term">调试 Debug</span>）修好游戏里的虫子，<br>
+  用角色卡（<span class="term">系统提示词 System Prompt</span>）给 AI 小狗设定性格和声音，<br>还在家独立做出了一个自己想玩的游戏。</p>
+  <div style="display:flex;gap:6mm;margin:4mm 0">${PAW.replace('<svg', '<svg style="width:16mm"').repeat(5)}</div>
+  <p style="font-size:16px;color:#5B6683">AI 驯狗学院　　　日期 <span class="blank" style="min-width:40mm"></span></p></div>`));
+
+// 13. 第一季度结业证书（第 12 节）
+pages.push(P('', '第一季度结业证书 · 第 12 节季度发布会', `<div class="cert" style="border-color:#8B6CFF;gap:5mm">${bit('62mm', 'happy')}<h1>第一季度结业证书</h1>
+  <div style="font-size:24px;font-weight:900;color:#8B6CFF;letter-spacing:4px">金牌驯狗师</div>
+  <p><span class="blank" style="min-width:60mm"></span> 同学</p>
+  <p style="line-height:1.9">在 AI 驯狗学院完成了第一季度 12 节课程：<br>
+  用<span class="term">提示词</span>指挥代码精灵改游戏，用<span class="term">变量</span>做分数和时间，用<span class="term">调试</span>抓虫子；<br>
+  把游戏<span class="term">拆解</span>成角色、规则、得分、结束，自己设计了一个游戏，<br>
+  给它加上<span class="term">事件</span>（操作）、<span class="term">条件判断</span>（规则）和<span class="term">循环</span>（关卡）；<br>
+  用<span class="term">系统提示词</span>（角色卡）、编舞和口令表，教会了自己的 AI 小狗<br>
+  <span class="blank" style="min-width:36mm"></span> 听懂自己的话。</p>
+  <div style="display:flex;gap:5mm;margin:2mm 0">${PAW.replace('<svg', '<svg style="width:13mm"').repeat(6)}</div>
+  <p style="font-size:16px;color:#5B6683">AI 驯狗学院　　　日期 <span class="blank" style="min-width:40mm"></span></p></div>`));
+
+document.getElementById('pages').innerHTML = pages.join('');
+</script>
+</body>
+</html>

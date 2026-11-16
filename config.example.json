@@ -1,0 +1,12 @@
+{
+  "port": 8080,
+  "llm": {
+    "provider": "none",
+    "base": "",
+    "key": "",
+    "model": "",
+    "timeout": 90
+  },
+  "dogs": {},
+  "publicUrl": ""
+}

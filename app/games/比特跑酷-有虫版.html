@@ -1,0 +1,314 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, user-scalable=no">
+<title>比特跑酷</title>
+<style>
+  html, body { margin: 0; height: 100%; background: #FFF7EC; font-family: "PingFang SC", "Microsoft YaHei", sans-serif; color: #1E2A4A; touch-action: manipulation; }
+  #box { height: 100%; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 10px; }
+  h1 { margin: 0; font-size: 28px; }
+  canvas { width: min(96vw, 160vh); max-height: 82vh; aspect-ratio: 16 / 9; border-radius: 18px; box-shadow: 0 6px 0 #F0E2CC; background: #BDE6FF; }
+  p { margin: 0; color: #5B6683; font-size: 18px; }
+</style>
+</head>
+<body>
+<div id="box">
+  <h1>比特跑酷</h1>
+  <canvas id="game" width="960" height="540"></canvas>
+  <p>点一下屏幕（或按空格）让比特跳起来</p>
+</div>
+
+<script>
+// ===== 游戏设置：想改游戏，先改这里 =====
+const 设置 = {
+  主角: "比特",        // "比特" 是驯狗学院的机器狗；也可以换成表情，比如 "🐰"
+  主角大小: 90,        // 数字越大，主角越大
+  背景: "白天",        // 可以填 "白天"、"夜晚"、"太空"
+  奔跑速度: 6,         // 数字越大，跑得越快
+  跳跃力气: 16,        // 数字越大，跳得越高
+  重力: 0.8,           // 数字越大，落得越快
+  显示分数: true,      // 是否显示分数
+  跳过加分: 1,         // 跳过一个“撞倒”的东西，加几分
+  生命: 3,             // 有几条命；填 0 表示撞一下就结束
+  倒计时: 60,          // 游戏时间（秒）；填 0 表示不限时
+  越来越快: true,      // 每得 5 分，速度变快一点
+  电量: true,          // 是否有电量：跑步会耗电，电用完比特就停下
+  每秒耗电: 5,         // 每秒用掉多少电（电量满格是 100）
+};
+
+// ===== 路上会出现的东西：只要你想得到，都可以加进来 =====
+// 碰到会："撞倒"（比特要跳过去）或 "吃掉"（比特会把它吃了）
+// 吃掉以后会怎样：加分、加电量……想让它发生什么，就告诉代码精灵
+// 出现机会：数字越大，越常出现
+const 路上的东西 = [
+  { 名字: "仙人掌", 图案: "🌵", 碰到会: "撞倒", 出现机会: 2 },
+  { 名字: "电池", 图案: "🔋", 碰到会: "吃掉", 加电量: 30, 出现机会: 1 },
+  { 名字: "甜甜圈", 图案: "🍩", 碰到会: "吃掉", 加分: 5, 出现机会: 1 },
+];
+
+// ===== 下面是游戏程序 =====
+const canvas = document.getElementById("game");
+const ctx = canvas.getContext("2d");
+const W = canvas.width, H = canvas.height;
+const 地面Y = H - 90;
+
+let 状态 = "准备";            // "准备"、"跑"、"结束"
+let 分数 = 0, 剩余生命 = 设置.生命, 剩余时间 = 设置.倒计时, 当前电量 = 100, 路程 = 0;
+let 路上 = [], 下一个距离 = 300, 闪烁 = 0, 结束原因 = "", 飘字们 = [];
+const 狗 = { x: 170, y: 地面Y, vy: 0 };
+
+function 重新开始() {
+  分数 = 0;
+  剩余生命 = 设置.生命;
+  剩余时间 = 设置.倒计时;
+  当前电量 = 100;
+  路程 = 0;
+  路上 = [];
+  下一个距离 = 300;
+  闪烁 = 0;
+  飘字们 = [];
+  狗.y = 地面Y; 狗.vy = 0;
+  状态 = "跑";
+}
+
+// 点屏幕或按空格：开始 / 跳跃 / 重来
+function 按下() {
+  if (状态 !== "跑") { 重新开始(); return; }
+  if (狗.y >= 地面Y) 狗.vy = -设置.跳跃力气;
+}
+canvas.addEventListener("pointerdown", 按下);
+document.addEventListener("keydown", e => { if (e.code === "Space" || e.key === "ArrowUp") { e.preventDefault(); 按下(); } });
+
+function 当前速度() {
+  if (设置.越来越快) return 设置.奔跑速度 + Math.floor(Math.max(0, 分数) / 5) * 0.6;
+  return 设置.奔跑速度;
+}
+
+// 按“出现机会”随机挑一个东西放到路上
+function 挑一个东西() {
+  let 总数 = 0;
+  for (const 东西 of 路上的东西) 总数 += 东西.出现机会 || 1;
+  let 随机 = Math.random() * 总数;
+  for (const 东西 of 路上的东西) {
+    随机 -= 东西.出现机会 || 1;
+    if (随机 <= 0) return 东西;
+  }
+  return 路上的东西[0];
+}
+
+// 两个方框有没有碰到
+function 撞到了(a, b) {
+  return a.左 < b.右 && a.右 > b.左 && a.上 < b.下 && a.下 > b.上;
+}
+
+function 飘字(文字, x, y, 颜色) { 飘字们.push({ 文字, x, y, 颜色, 寿命: 45 }); }
+
+// 比特碰到路上的东西时，会发生什么
+function 碰到(东西) {
+  if (东西.碰到会 === "吃掉") {
+    东西.不见了 = true;
+    if (东西.加分) { 分数 += 东西.加分; 飘字("+" + 东西.加分 + " 分", 东西.x, 地面Y - 100, "#18A87C"); }
+    if (设置.电量 && 东西.加电量) { 当前电量 = Math.min(100, 当前电量 - 东西.加电量); 飘字("电量 +" + 东西.加电量, 东西.x, 地面Y - 140, "#2366D1"); }
+    if (!东西.加分 && !(设置.电量 && 东西.加电量)) 飘字("好吃！", 东西.x, 地面Y - 100, "#18A87C");
+    return;
+  }
+  if (东西.碰到会 === "撞到") {
+    东西.撞过 = true;
+    if (设置.生命 > 0) {
+      剩余生命 -= 1;
+      闪烁 = 40;
+      if (剩余生命 <= 0) { 状态 = "结束"; 结束原因 = "没有生命了"; }
+    } else { 状态 = "结束"; 结束原因 = "撞到" + 东西.名字 + "了"; }
+  }
+}
+
+function 更新() {
+  if (状态 !== "跑") return;
+  const 速度 = 当前速度();
+  路程 += 速度;
+
+  // 跳跃和下落
+  狗.y += 狗.vy;
+  狗.vy += 设置.重力 / 10;
+  if (狗.y >= 地面Y) { 狗.y = 地面Y; 狗.vy = 0; }
+
+  // 往路上放新东西
+  下一个距离 -= 速度;
+  if (下一个距离 <= 0) {
+    路上.push(Object.assign({ x: W + 40 }, 挑一个东西()));
+    下一个距离 = 260 + Math.random() * 300;
+  }
+
+  // 移动路上的东西，看看比特有没有碰到
+  const s = 设置.主角大小 / 100;
+  const 狗框 = { 左: 狗.x - 45 * s, 右: 狗.x + 70 * s, 上: 狗.y - 95 * s, 下: 狗.y - 4 };
+  for (const 东西 of 路上) {
+    东西.x -= 速度;
+    const 框 = { 左: 东西.x - 20, 右: 东西.x + 20, 上: 地面Y - 50, 下: 地面Y };
+    if (!东西.不见了 && !东西.撞过 && 撞到了(狗框, 框)) 碰到(东西);
+    if (东西.碰到会 === "撞倒" && !东西.过了 && 东西.x + 20 < 狗框.左) {
+      东西.过了 = true;
+      if (设置.显示分数 && !东西.撞过) 分数 += 设置.跳过加分;
+    }
+  }
+  路上 = 路上.filter(东西 => 东西.x > -60 && !东西.不见了);
+
+  // 电量：跑步会耗电
+  if (设置.电量) {
+    当前电量 -= 设置.每秒耗电 / 60;
+    if (当前电量 <= 0) { 当前电量 = 0; 状态 = "结束"; 结束原因 = "没电了"; }
+  }
+
+  // 倒计时
+  if (设置.倒计时 > 0) {
+    剩余时间 -= 1 / 60;
+    if (剩余时间 <= 0) { 剩余时间 = 0; 状态 = "结束"; 结束原因 = "时间到"; }
+  }
+  if (闪烁 > 0) 闪烁--;
+}
+
+// ===== 画画 =====
+function 画背景() {
+  const 主题 = { 白天: ["#BDE6FF", "#F2C48D"], 夜晚: ["#1E2A4A", "#3B4B6E"], 太空: ["#140C33", "#4B3F72"] }[设置.背景] || ["#BDE6FF", "#F2C48D"];
+  ctx.fillStyle = 主题[0]; ctx.fillRect(0, 0, W, H);
+  const 偏移 = 路程 * 0.2;
+  if (设置.背景 === "白天") {
+    ctx.fillStyle = "#FFC93D"; ctx.beginPath(); ctx.arc(860, 120, 40, 0, Math.PI * 2); ctx.fill();
+    ctx.fillStyle = "#FFFFFF";
+    for (let i = 0; i < 4; i++) { const x = ((i * 300 - 偏移) % 1200 + 1200) % 1200 - 120; 云(x, 110 + (i % 2) * 60); }
+  } else {
+    ctx.fillStyle = "#FFFFFF";
+    for (let i = 0; i < 40; i++) { const x = ((i * 97 - 偏移 * 0.5) % W + W) % W; ctx.fillRect(x, (i * 53) % (地面Y - 40), 3, 3); }
+    if (设置.背景 === "夜晚") { ctx.fillStyle = "#FFF3C4"; ctx.beginPath(); ctx.arc(840, 120, 36, 0, Math.PI * 2); ctx.fill(); }
+    if (设置.背景 === "太空") { ctx.fillStyle = "#8B6CFF"; ctx.beginPath(); ctx.arc(800, 140, 50, 0, Math.PI * 2); ctx.fill(); ctx.strokeStyle = "#FFC93D"; ctx.lineWidth = 6; ctx.beginPath(); ctx.ellipse(800, 140, 80, 18, -0.3, 0, Math.PI * 2); ctx.stroke(); }
+  }
+  ctx.fillStyle = 主题[1]; ctx.fillRect(0, 地面Y, W, H - 地面Y);
+  ctx.fillStyle = "rgba(0,0,0,0.12)";
+  for (let i = 0; i < 12; i++) { const x = ((i * 90 - 路程) % 1080 + 1080) % 1080 - 60; ctx.fillRect(x, 地面Y + 22, 40, 6); }
+}
+function 云(x, y) { ctx.beginPath(); ctx.arc(x, y, 26, 0, 7); ctx.arc(x + 30, y - 12, 32, 0, 7); ctx.arc(x + 64, y, 24, 0, 7); ctx.fill(); }
+
+function 画比特(x, y, 大小) {
+  const s = 大小 / 100;
+  ctx.save(); ctx.translate(x, y); ctx.scale(s, s);
+  // 影子
+  ctx.fillStyle = "rgba(36,48,94,.16)"; ctx.beginPath(); ctx.ellipse(0, 54, 40, 6, 0, 0, Math.PI * 2); ctx.fill();
+  // 后腿
+  ctx.fillStyle = "#F4F6FA"; ctx.strokeStyle = "#C5CCD8"; ctx.lineWidth = 1.5;
+  [[-28, 20], [28, 20]].forEach(([lx, ly]) => { 圆角矩形(lx - 8, ly, 16, 26, 8); });
+  ctx.fillStyle = "#FF8A3D";
+  [[-28, 42], [28, 42]].forEach(([lx, ly]) => { 圆角矩形(lx - 10, ly, 20, 12, 5); });
+  // 尾巴
+  ctx.strokeStyle = "#FF8A3D"; ctx.lineWidth = 9; ctx.lineCap = "round";
+  ctx.beginPath(); ctx.moveTo(26, 8); ctx.quadraticCurveTo(44, 14, 40, 30); ctx.stroke();
+  // 身体
+  ctx.fillStyle = "#F4F6FA"; 圆角矩形(-34, -18, 68, 56, 22);
+  ctx.strokeStyle = "#C5CCD8"; ctx.lineWidth = 2; ctx.beginPath();
+  (function(x,y,w,h,r){ctx.moveTo(x+r,y);ctx.arcTo(x+w,y,x+w,y+h,r);ctx.arcTo(x+w,y+h,x,y+h,r);ctx.arcTo(x,y+h,x,y,r);ctx.arcTo(x,y,x+w,y,r);ctx.closePath();})(-34,-18,68,56,22); ctx.stroke();
+  // 橙心 </>
+  ctx.fillStyle = "#FF8A3D";
+  ctx.beginPath();
+  ctx.moveTo(0, 22); ctx.bezierCurveTo(-18, 8, -26, -4, -16, -12); ctx.bezierCurveTo(-10, -16, -4, -12, 0, -6);
+  ctx.bezierCurveTo(4, -12, 10, -16, 16, -12); ctx.bezierCurveTo(26, -4, 18, 8, 0, 22);
+  ctx.fill();
+  ctx.strokeStyle = "#fff"; ctx.lineWidth = 2.4; ctx.lineCap = "round"; ctx.lineJoin = "round";
+  ctx.beginPath(); ctx.moveTo(-9, -14); ctx.lineTo(-15, -8); ctx.lineTo(-9, -2); ctx.stroke();
+  ctx.beginPath(); ctx.moveTo(-2.5, -14); ctx.lineTo(2.5, -2); ctx.stroke();
+  ctx.beginPath(); ctx.moveTo(9, -14); ctx.lineTo(15, -8); ctx.lineTo(9, -2); ctx.stroke();
+  // 前腿
+  ctx.fillStyle = "#F4F6FA";
+  [[-16, 24], [16, 24]].forEach(([lx, ly]) => { 圆角矩形(lx - 7, ly, 14, 24, 7); });
+  ctx.fillStyle = "#FF8A3D";
+  [[-16, 44], [16, 44]].forEach(([lx, ly]) => { 圆角矩形(lx - 9, ly, 18, 11, 5); });
+  // 垂耳：从头两侧下垂的胶囊耳（正旋转=下垂；负旋转会变成翅耳）
+  ctx.fillStyle = "#FF8A3D";
+  ctx.beginPath(); ctx.ellipse(-48, -48, 13, 30, 0.35, 0, Math.PI * 2); ctx.fill();
+  ctx.beginPath(); ctx.ellipse(48, -48, 13, 30, -0.35, 0, Math.PI * 2); ctx.fill();
+  ctx.fillStyle = "#FFC08A";
+  ctx.beginPath(); ctx.ellipse(-48, -46, 6, 18, 0.35, 0, Math.PI * 2); ctx.fill();
+  ctx.beginPath(); ctx.ellipse(48, -46, 6, 18, -0.35, 0, Math.PI * 2); ctx.fill();
+  // 头
+  ctx.fillStyle = "#F4F6FA"; 圆角矩形(-40, -88, 80, 72, 30);
+  ctx.strokeStyle = "#C5CCD8"; ctx.lineWidth = 2; ctx.beginPath();
+  (function(x,y,w,h,r){ctx.moveTo(x+r,y);ctx.arcTo(x+w,y,x+w,y+h,r);ctx.arcTo(x+w,y+h,x,y+h,r);ctx.arcTo(x,y+h,x,y,r);ctx.arcTo(x,y,x+w,y,r);ctx.closePath();})(-40,-88,80,72,30); ctx.stroke();
+  ctx.fillStyle = "rgba(255,255,255,.55)"; ctx.beginPath(); ctx.ellipse(-14, -70, 16, 8, -0.3, 0, Math.PI * 2); ctx.fill();
+  // 黑面罩
+  ctx.fillStyle = "#141820"; ctx.beginPath(); ctx.ellipse(0, -52, 28, 22, 0, 0, Math.PI * 2); ctx.fill();
+  // 四角星星眼 ✦
+  ctx.fillStyle = "#5BE0FF";
+  for (const [ex, ey] of [[-12, -54], [12, -54]]) {
+    ctx.beginPath();
+    const outer = 9, inner = 9 * 0.38;
+    for (let i = 0; i < 8; i++) {
+      const a = -Math.PI / 2 + i * Math.PI / 4;
+      const rad = i % 2 === 0 ? outer : inner;
+      const x = ex + Math.cos(a) * rad, y = ey + Math.sin(a) * rad;
+      if (i === 0) ctx.moveTo(x, y); else ctx.lineTo(x, y);
+    }
+    ctx.closePath(); ctx.fill();
+  }
+  // 像素小嘴
+  [[-5, -40], [-1, -38], [3, -40]].forEach(([mx, my]) => { 圆角矩形(mx, my, 2.6, 2.2, 0.4); });
+  // 天线：橙底座 + 白杆 + 白球
+  ctx.fillStyle = "#FF8A3D"; ctx.beginPath(); ctx.ellipse(0, -88, 7, 4, 0, 0, Math.PI * 2); ctx.fill();
+  ctx.strokeStyle = "#F2F4F8"; ctx.lineWidth = 4; ctx.lineCap = "round";
+  ctx.beginPath(); ctx.moveTo(0, -88); ctx.lineTo(0, -104); ctx.stroke();
+  ctx.fillStyle = "#FFFFFF"; ctx.strokeStyle = "#D0D6E2"; ctx.lineWidth = 1;
+  ctx.beginPath(); ctx.arc(0, -106, 5.5, 0, Math.PI * 2); ctx.fill(); ctx.stroke();
+  ctx.restore();
+}
+function 圆角矩形(x, y, w, h, r) {
+  r = Math.min(r, w / 2, h / 2);
+  ctx.beginPath(); ctx.moveTo(x + r, y); ctx.arcTo(x + w, y, x + w, y + h, r); ctx.arcTo(x + w, y + h, x, y + h, r);
+  ctx.arcTo(x, y + h, x, y, r); ctx.arcTo(x, y, x + w, y, r); ctx.closePath(); ctx.fill();
+}
+function 画表情(文字, x, y, 大小) {
+  ctx.font = 大小 + 'px "Apple Color Emoji","Segoe UI Emoji","Noto Color Emoji",sans-serif';
+  ctx.fillStyle = "#000"; ctx.textAlign = "center"; ctx.textBaseline = "middle"; ctx.fillText(文字, x, y);
+}
+function 画文字(文字, x, y, 大小, 颜色, 对齐) {
+  ctx.fillStyle = 颜色; ctx.font = "bold " + 大小 + 'px "PingFang SC","Microsoft YaHei",sans-serif';
+  ctx.textAlign = 对齐 || "center"; ctx.textBaseline = "middle"; ctx.fillText(文字, x, y);
+}
+function 画电量() {
+  const x = W / 2 - 130, y = 22, w = 260, h = 36;
+  ctx.fillStyle = "rgba(255,255,255,0.9)"; 圆角矩形(x, y, w, h, 12);
+  const 长度 = (w - 8) * 当前电量 / 100;
+  if (长度 > 2) { ctx.fillStyle = 当前电量 > 30 ? "#2ECC9A" : "#E5484D"; 圆角矩形(x + 4, y + 4, 长度, h - 8, 8); }
+  画文字("电量 " + Math.ceil(当前电量), W / 2, y + h / 2, 22, "#1E2A4A");
+}
+
+function 画() {
+  画背景();
+  for (const 东西 of 路上) 画表情(东西.图案, 东西.x, 地面Y - 28, 58);
+  const 显示狗 = 闪烁 === 0 || Math.floor(闪烁 / 5) % 2 === 0;
+  if (显示狗) {
+    if (设置.主角 === "比特") 画比特(狗.x, 狗.y, 设置.主角大小);
+    else 画表情(设置.主角, 狗.x, 狗.y - 设置.主角大小 * 0.45, 设置.主角大小);
+  }
+  for (const 字 of 飘字们) {
+    ctx.globalAlpha = 字.寿命 / 45; 画文字(字.文字, 字.x, 字.y, 30, 字.颜色); 字.y -= 1.2; 字.寿命--; ctx.globalAlpha = 1;
+  }
+  飘字们 = 飘字们.filter(字 => 字.寿命 > 0);
+  const 字色 = 设置.背景 === "白天" ? "#1E2A4A" : "#FFFFFF";
+  if (状态 !== "准备") {
+    if (设置.显示分数) 画文字("分数 " + 分数, 24, 40, 34, 字色, "left");
+    if (设置.生命 > 0) 画文字("生命 " + "♥".repeat(Math.max(0, 剩余生命)), 24, 84, 30, "#E5484D", "left");
+    if (设置.倒计时 > 0) 画文字("倒计时 " + Math.ceil(剩余时间), W - 24, 40, 34, 字色, "right");
+    if (设置.电量) 画电量();
+  }
+  if (状态 === "准备") { 画文字("点一下，开始跑！", W / 2, H / 2 - 40, 52, 字色); }
+  if (状态 === "结束") {
+    ctx.fillStyle = "rgba(30,42,74,0.55)"; ctx.fillRect(0, 0, W, H);
+    画文字(结束原因 + "！", W / 2, H / 2 - 50, 64, "#FFFFFF");
+    if (设置.显示分数) 画文字("得分 " + 分数, W / 2, H / 2 + 20, 44, "#FFC93D");
+    画文字("点一下，再来一次", W / 2, H / 2 + 80, 32, "#FFFFFF");
+  }
+}
+
+function 游戏循环() { 更新(); 画(); requestAnimationFrame(游戏循环); }
+游戏循环();
+</script>
+</body>
+</html>

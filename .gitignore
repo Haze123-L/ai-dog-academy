@@ -1,0 +1,15 @@
+node_modules/
+app/data/
+data/
+.env
+.env.*
+!.env.example
+config.json
+.tmp/
+.artifacts/
+.cache/
+*.log
+*.pem
+*.key
+*.zip
+*.tar.gz

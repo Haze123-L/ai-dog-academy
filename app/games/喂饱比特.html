@@ -1,0 +1,239 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, user-scalable=no">
+<title>喂饱比特</title>
+<style>
+  html, body { margin: 0; height: 100%; background: #FFF7EC; font-family: "PingFang SC", "Microsoft YaHei", sans-serif; color: #1E2A4A; touch-action: none; }
+  #box { height: 100%; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 10px; }
+  h1 { margin: 0; font-size: 28px; }
+  canvas { width: min(96vw, 160vh); max-height: 82vh; aspect-ratio: 16 / 9; border-radius: 18px; box-shadow: 0 6px 0 #F0E2CC; background: #BDE6FF; }
+  p { margin: 0; color: #5B6683; font-size: 18px; }
+</style>
+</head>
+<body>
+<div id="box">
+  <h1>喂饱比特</h1>
+  <canvas id="game" width="960" height="540"></canvas>
+  <p>按住屏幕左右拖动，接住掉下来的东西</p>
+</div>
+
+<script>
+// ===== 游戏设置：想改游戏，先改这里 =====
+const 设置 = {
+  主角: "比特",          // "比特" 是驯狗学院的机器狗；也可以换成表情，比如 "🐱"
+  主角大小: 90,          // 数字越大，主角越大
+  掉落速度: 3,           // 数字越大，掉得越快
+  背景颜色: "#BDE6FF",   // 天空的颜色
+  地面颜色: "#8FD18F",   // 草地的颜色
+};
+
+// ===== 天上会掉下来的东西：只要你想得到，都可以加进来 =====
+// 接到加几分：可以是负数，比如炸弹填 -3
+// 出现机会：数字越大，越常掉下来
+const 掉下来的东西 = [
+  { 名字: "骨头", 图案: "🦴", 接到加几分: 1, 出现机会: 1 },
+];
+
+// ===== 下面是游戏程序 =====
+const canvas = document.getElementById("game");
+const ctx = canvas.getContext("2d");
+const W = canvas.width, H = canvas.height;
+const 地面高度 = 70;
+
+let 分数 = 0;
+let 主角X = W / 2;
+let 天上 = [];        // 天上正在掉的东西
+let 飘字们 = [];      // 接到东西时飘起来的字
+let 帧数 = 0;
+
+// 用手指或鼠标控制主角左右移动
+function 移动到(event) {
+  const r = canvas.getBoundingClientRect();
+  主角X = (event.clientX - r.left) / r.width * W;
+}
+canvas.addEventListener("pointerdown", 移动到);
+canvas.addEventListener("pointermove", e => { if (e.buttons || e.pointerType === "mouse") 移动到(e); });
+document.addEventListener("keydown", e => {
+  if (e.key === "ArrowLeft") 主角X -= 40;
+  if (e.key === "ArrowRight") 主角X += 40;
+});
+
+// 按“出现机会”随机挑一个东西
+function 挑一个东西() {
+  let 总数 = 0;
+  for (const 东西 of 掉下来的东西) 总数 += 东西.出现机会 || 1;
+  let 随机 = Math.random() * 总数;
+  for (const 东西 of 掉下来的东西) {
+    随机 -= 东西.出现机会 || 1;
+    if (随机 <= 0) return 东西;
+  }
+  return 掉下来的东西[0];
+}
+
+// 让一个东西从天上掉下来
+function 掉一个() {
+  天上.push(Object.assign({ x: 40 + Math.random() * (W - 80), y: -30, 速度: 设置.掉落速度 * (0.8 + Math.random() * 0.5) }, 挑一个东西()));
+}
+
+// 比特接到东西时，会发生什么
+function 接到(东西) {
+  东西.不见了 = true;
+  分数 += 东西.接到加几分;
+  const 好 = 东西.接到加几分 >= 0;
+  飘字们.push({ x: 东西.x, y: 东西.y, 文字: (好 ? "+" : "") + 东西.接到加几分, 颜色: 好 ? "#18A87C" : "#E5484D", 寿命: 40 });
+}
+
+// 画驯狗学院的机器狗「比特」
+function 画比特(x, y, 大小) {
+  const s = 大小 / 100;
+  ctx.save(); ctx.translate(x, y); ctx.scale(s, s);
+  // 影子
+  ctx.fillStyle = "rgba(36,48,94,.16)"; ctx.beginPath(); ctx.ellipse(0, 54, 40, 6, 0, 0, Math.PI * 2); ctx.fill();
+  // 后腿
+  ctx.fillStyle = "#F4F6FA"; ctx.strokeStyle = "#C5CCD8"; ctx.lineWidth = 1.5;
+  [[-28, 20], [28, 20]].forEach(([lx, ly]) => { 圆角矩形(lx - 8, ly, 16, 26, 8); });
+  ctx.fillStyle = "#FF8A3D";
+  [[-28, 42], [28, 42]].forEach(([lx, ly]) => { 圆角矩形(lx - 10, ly, 20, 12, 5); });
+  // 尾巴
+  ctx.strokeStyle = "#FF8A3D"; ctx.lineWidth = 9; ctx.lineCap = "round";
+  ctx.beginPath(); ctx.moveTo(26, 8); ctx.quadraticCurveTo(44, 14, 40, 30); ctx.stroke();
+  // 身体
+  ctx.fillStyle = "#F4F6FA"; 圆角矩形(-34, -18, 68, 56, 22);
+  ctx.strokeStyle = "#C5CCD8"; ctx.lineWidth = 2; ctx.beginPath();
+  (function(x,y,w,h,r){ctx.moveTo(x+r,y);ctx.arcTo(x+w,y,x+w,y+h,r);ctx.arcTo(x+w,y+h,x,y+h,r);ctx.arcTo(x,y+h,x,y,r);ctx.arcTo(x,y,x+w,y,r);ctx.closePath();})(-34,-18,68,56,22); ctx.stroke();
+  // 橙心 </>
+  ctx.fillStyle = "#FF8A3D";
+  ctx.beginPath();
+  ctx.moveTo(0, 22); ctx.bezierCurveTo(-18, 8, -26, -4, -16, -12); ctx.bezierCurveTo(-10, -16, -4, -12, 0, -6);
+  ctx.bezierCurveTo(4, -12, 10, -16, 16, -12); ctx.bezierCurveTo(26, -4, 18, 8, 0, 22);
+  ctx.fill();
+  ctx.strokeStyle = "#fff"; ctx.lineWidth = 2.4; ctx.lineCap = "round"; ctx.lineJoin = "round";
+  ctx.beginPath(); ctx.moveTo(-9, -14); ctx.lineTo(-15, -8); ctx.lineTo(-9, -2); ctx.stroke();
+  ctx.beginPath(); ctx.moveTo(-2.5, -14); ctx.lineTo(2.5, -2); ctx.stroke();
+  ctx.beginPath(); ctx.moveTo(9, -14); ctx.lineTo(15, -8); ctx.lineTo(9, -2); ctx.stroke();
+  // 前腿
+  ctx.fillStyle = "#F4F6FA";
+  [[-16, 24], [16, 24]].forEach(([lx, ly]) => { 圆角矩形(lx - 7, ly, 14, 24, 7); });
+  ctx.fillStyle = "#FF8A3D";
+  [[-16, 44], [16, 44]].forEach(([lx, ly]) => { 圆角矩形(lx - 9, ly, 18, 11, 5); });
+  // 垂耳：从头两侧下垂的胶囊耳（正旋转=下垂；负旋转会变成翅耳）
+  ctx.fillStyle = "#FF8A3D";
+  ctx.beginPath(); ctx.ellipse(-48, -48, 13, 30, 0.35, 0, Math.PI * 2); ctx.fill();
+  ctx.beginPath(); ctx.ellipse(48, -48, 13, 30, -0.35, 0, Math.PI * 2); ctx.fill();
+  ctx.fillStyle = "#FFC08A";
+  ctx.beginPath(); ctx.ellipse(-48, -46, 6, 18, 0.35, 0, Math.PI * 2); ctx.fill();
+  ctx.beginPath(); ctx.ellipse(48, -46, 6, 18, -0.35, 0, Math.PI * 2); ctx.fill();
+  // 头
+  ctx.fillStyle = "#F4F6FA"; 圆角矩形(-40, -88, 80, 72, 30);
+  ctx.strokeStyle = "#C5CCD8"; ctx.lineWidth = 2; ctx.beginPath();
+  (function(x,y,w,h,r){ctx.moveTo(x+r,y);ctx.arcTo(x+w,y,x+w,y+h,r);ctx.arcTo(x+w,y+h,x,y+h,r);ctx.arcTo(x,y+h,x,y,r);ctx.arcTo(x,y,x+w,y,r);ctx.closePath();})(-40,-88,80,72,30); ctx.stroke();
+  ctx.fillStyle = "rgba(255,255,255,.55)"; ctx.beginPath(); ctx.ellipse(-14, -70, 16, 8, -0.3, 0, Math.PI * 2); ctx.fill();
+  // 黑面罩
+  ctx.fillStyle = "#141820"; ctx.beginPath(); ctx.ellipse(0, -52, 28, 22, 0, 0, Math.PI * 2); ctx.fill();
+  // 四角星星眼 ✦
+  ctx.fillStyle = "#5BE0FF";
+  for (const [ex, ey] of [[-12, -54], [12, -54]]) {
+    ctx.beginPath();
+    const outer = 9, inner = 9 * 0.38;
+    for (let i = 0; i < 8; i++) {
+      const a = -Math.PI / 2 + i * Math.PI / 4;
+      const rad = i % 2 === 0 ? outer : inner;
+      const x = ex + Math.cos(a) * rad, y = ey + Math.sin(a) * rad;
+      if (i === 0) ctx.moveTo(x, y); else ctx.lineTo(x, y);
+    }
+    ctx.closePath(); ctx.fill();
+  }
+  // 像素小嘴
+  [[-5, -40], [-1, -38], [3, -40]].forEach(([mx, my]) => { 圆角矩形(mx, my, 2.6, 2.2, 0.4); });
+  // 天线：橙底座 + 白杆 + 白球
+  ctx.fillStyle = "#FF8A3D"; ctx.beginPath(); ctx.ellipse(0, -88, 7, 4, 0, 0, Math.PI * 2); ctx.fill();
+  ctx.strokeStyle = "#F2F4F8"; ctx.lineWidth = 4; ctx.lineCap = "round";
+  ctx.beginPath(); ctx.moveTo(0, -88); ctx.lineTo(0, -104); ctx.stroke();
+  ctx.fillStyle = "#FFFFFF"; ctx.strokeStyle = "#D0D6E2"; ctx.lineWidth = 1;
+  ctx.beginPath(); ctx.arc(0, -106, 5.5, 0, Math.PI * 2); ctx.fill(); ctx.stroke();
+  ctx.restore();
+}
+function 圆角矩形(x, y, w, h, r) {
+  ctx.beginPath(); ctx.moveTo(x + r, y); ctx.arcTo(x + w, y, x + w, y + h, r); ctx.arcTo(x + w, y + h, x, y + h, r);
+  ctx.arcTo(x, y + h, x, y, r); ctx.arcTo(x, y, x + w, y, r); ctx.closePath(); ctx.fill();
+}
+function 画表情(文字, x, y, 大小) {
+  ctx.font = 大小 + 'px "Apple Color Emoji","Segoe UI Emoji","Noto Color Emoji",sans-serif';
+  ctx.fillStyle = "#000"; ctx.textAlign = "center"; ctx.textBaseline = "middle"; ctx.fillText(文字, x, y);
+}
+
+// 画金元宝：中国古代船形金锭——底下像小船，两端向上翘起，中间隆起一个圆顶（canvas 画，不用钱袋 emoji）
+function 画金元宝(x, y, 大小) {
+  const s = (大小 || 56) / 100;
+  ctx.save(); ctx.translate(x, y); ctx.scale(s, s);
+  const 金 = ctx.createLinearGradient(0, -40, 0, 40);
+  金.addColorStop(0, "#FFF3A6"); 金.addColorStop(0.45, "#FFC93C"); 金.addColorStop(1, "#C98A00");
+  ctx.lineJoin = "round"; ctx.strokeStyle = "#9A6400"; ctx.lineWidth = 4;
+  // 中间隆起的圆顶（先画，船身会盖住它的下半部分）
+  const 顶 = ctx.createRadialGradient(-8, -22, 4, 0, -10, 34);
+  顶.addColorStop(0, "#FFF8C8"); 顶.addColorStop(0.5, "#FFD34D"); 顶.addColorStop(1, "#D99A00");
+  ctx.fillStyle = 顶;
+  ctx.beginPath(); ctx.ellipse(0, -6, 26, 28, 0, Math.PI, 0); ctx.closePath(); ctx.fill(); ctx.stroke();
+  // 船形底座：两端翘起
+  ctx.fillStyle = 金;
+  ctx.beginPath();
+  ctx.moveTo(-50, -22);                              // 左边翘起的尖
+  ctx.quadraticCurveTo(-30, -2, -22, -4);            // 左边沿往里收
+  ctx.quadraticCurveTo(0, 4, 22, -4);                // 中间的口沿
+  ctx.quadraticCurveTo(30, -2, 50, -22);             // 右边翘起的尖
+  ctx.quadraticCurveTo(46, 14, 26, 26);              // 右边船身
+  ctx.quadraticCurveTo(0, 36, -26, 26);              // 船底
+  ctx.quadraticCurveTo(-46, 14, -50, -22);           // 左边船身
+  ctx.closePath(); ctx.fill(); ctx.stroke();
+  // 高光
+  ctx.strokeStyle = "rgba(255,255,255,.75)"; ctx.lineWidth = 3; ctx.lineCap = "round";
+  ctx.beginPath(); ctx.moveTo(-36, 4); ctx.quadraticCurveTo(-20, 18, 0, 20); ctx.stroke();
+  ctx.beginPath(); ctx.arc(-9, -20, 6, Math.PI * 1.1, Math.PI * 1.7); ctx.stroke();
+  ctx.restore();
+}
+
+// 每一帧都会运行一次
+function 游戏循环() {
+  帧数++;
+  if (帧数 % Math.max(16, 48 - 设置.掉落速度 * 4) === 0) 掉一个();
+
+  主角X = Math.max(50, Math.min(W - 50, 主角X));
+  const 主角Y = H - 地面高度 - 设置.主角大小 * 0.25;
+
+  // 移动天上的东西，看看有没有接住
+  for (const 东西 of 天上) {
+    东西.y += 东西.速度;
+    const 接住了 = Math.abs(东西.x - 主角X) < 设置.主角大小 * 0.6 && Math.abs(东西.y - (主角Y - 设置.主角大小 * 0.3)) < 设置.主角大小 * 0.5;
+    if (接住了 && !东西.不见了) 接到(东西);
+  }
+  天上 = 天上.filter(东西 => !东西.不见了 && 东西.y < H);
+
+  // 画背景和地面
+  ctx.fillStyle = 设置.背景颜色; ctx.fillRect(0, 0, W, H);
+  ctx.fillStyle = 设置.地面颜色; ctx.fillRect(0, H - 地面高度, W, 地面高度);
+
+  // 画天上的东西、主角、飘字
+  for (const 东西 of 天上) {
+    if (东西.画法 === "金元宝") 画金元宝(东西.x, 东西.y, 70);   // 没有 emoji 的东西用 canvas 画
+    else 画表情(东西.图案, 东西.x, 东西.y, 50);
+  }
+  if (设置.主角 === "比特") 画比特(主角X, 主角Y, 设置.主角大小);
+  else 画表情(设置.主角, 主角X, 主角Y - 设置.主角大小 * 0.2, 设置.主角大小);
+  for (const 字 of 飘字们) {
+    ctx.globalAlpha = 字.寿命 / 40; ctx.fillStyle = 字.颜色; ctx.font = "bold 34px sans-serif"; ctx.textAlign = "center";
+    ctx.fillText(字.文字, 字.x, 字.y); 字.y -= 1.5; 字.寿命--; ctx.globalAlpha = 1;
+  }
+  飘字们 = 飘字们.filter(字 => 字.寿命 > 0);
+
+  // 画分数
+  ctx.fillStyle = "#1E2A4A"; ctx.font = "bold 36px sans-serif"; ctx.textAlign = "left"; ctx.textBaseline = "top";
+  ctx.fillText("分数 " + 分数, 24, 20);
+
+  requestAnimationFrame(游戏循环);
+}
+游戏循环();
+</script>
+</body>
+</html>

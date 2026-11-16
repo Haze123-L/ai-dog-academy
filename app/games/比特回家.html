@@ -1,0 +1,370 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, user-scalable=no">
+<title>比特回家</title>
+<style>
+  html, body { margin: 0; height: 100%; background: #FFF7EC; font-family: "PingFang SC", "Microsoft YaHei", sans-serif; color: #1E2A4A; touch-action: none; -webkit-user-select: none; user-select: none; }
+  #box { height: 100%; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 10px; }
+  h1 { margin: 0; font-size: 28px; }
+  canvas { width: min(96vw, 160vh); max-height: 82vh; aspect-ratio: 16 / 9; border-radius: 18px; box-shadow: 0 6px 0 #F0E2CC; background: #BFE6A8; touch-action: none; }
+  p { margin: 0; color: #5B6683; font-size: 18px; }
+</style>
+</head>
+<body>
+<div id="box">
+  <h1>比特回家</h1>
+  <canvas id="game" width="960" height="540"></canvas>
+  <p>怎么让比特动起来？</p>
+</div>
+
+<script>
+// ===== 游戏设置：想改游戏，先改这里 =====
+const 设置 = {
+  主角: "比特",        // "比特" 是驯狗学院的机器狗；也可以换成表情，比如 "🐰"
+  主角大小: 70,        // 数字越大，主角越大
+  背景: "草地",        // 可以填 "草地"、"夜晚"、"雪地"
+  走路速度: 4,         // 数字越大，走得越快
+  显示分数: false,     // 是否显示分数
+  生命: 0,             // 有几条命；填 0 表示不算命
+  倒计时: 0,           // 游戏时间（秒）；填 0 表示不限时
+  关卡: false,         // 回到狗窝以后，是不是进下一关（每一关多一只猫，猫跑得快一点）
+  最后一关: 3,         // 打通第几关算通关
+};
+
+// ===== 怎么指挥比特：每一种操作，就是一个「事件」 =====
+// 发生一件事（按下按键、点到屏幕），程序就去做一件事（比特走一步）
+// true = 打开，false = 关着
+const 操作 = {
+  方向键: false,      // 按键盘上的方向键走（电脑上用）
+  屏幕按钮: false,    // 屏幕右下角出现四个箭头按钮，按住就走（平板上用）
+  点哪走哪: false,    // 点一下屏幕，比特走到那里
+  拖着走: false,      // 手指按住比特，拖到哪里走到哪里
+  冲刺: false,        // 按空格键或屏幕上的「冲」按钮：3 秒内跑得飞快
+};
+
+// ===== 场上的东西：碰到了会发生什么，写在「碰到会」里 =====
+// 碰到会：""（什么也不发生）、"加分"、"扣命"、"变慢"、"变快"、"结束"
+// 加几分：碰到会 "加分" 时加几分；几秒：碰到会 "变慢" 或 "变快" 时持续几秒
+// 数量：每一关放几个；会动：会不会走来走去
+const 场上的东西 = [
+  { 名字: "骨头", 图案: "🦴", 数量: 5, 碰到会: "", 会动: false },
+  { 名字: "水坑", 图案: "💧", 数量: 3, 碰到会: "", 会动: false },
+  { 名字: "猫", 图案: "🐱", 数量: 1, 碰到会: "", 会动: true },
+];
+
+// ===== 下面是游戏程序 =====
+const canvas = document.getElementById("game");
+const ctx = canvas.getContext("2d");
+const W = canvas.width, H = canvas.height;
+const 狗窝 = { x: W - 90, y: 90 };
+const 起点 = { x: 90, y: H - 80 };
+
+let 状态 = "准备";          // "准备"、"玩"、"结束"、"回家了"
+let 分数 = 0, 剩余生命 = 设置.生命, 剩余时间 = 设置.倒计时, 第几关 = 1;
+let 东西们 = [], 飘字们 = [], 闪烁 = 0, 慢的时间 = 0, 快的时间 = 0, 冲刺时间 = 0, 结束原因 = "", 横幅 = 0, 帧数 = 0, 没动的时间 = 0;
+const 狗 = { x: 起点.x, y: 起点.y };
+let 目标 = null, 拖着 = false;
+const 按着 = {};
+
+// 按出现位置放东西：不放在起点和狗窝旁边
+function 放东西() {
+  东西们 = [];
+  for (const 东西 of 场上的东西) {
+    let 个数 = 东西.数量 || 1;
+    if (设置.关卡 && 东西.会动) 个数 += 第几关 - 1;   // 每一关多一只会动的
+    for (let i = 0; i < 个数; i++) {
+      let x, y, 试 = 0;
+      do { x = 80 + Math.random() * (W - 160); y = 80 + Math.random() * (H - 160); 试++; }
+      while (试 < 50 && (Math.hypot(x - 起点.x, y - 起点.y) < 150 || Math.hypot(x - 狗窝.x, y - 狗窝.y) < 140));
+      const 角度 = Math.random() * Math.PI * 2, 快慢 = 1.4 + (设置.关卡 ? (第几关 - 1) * 0.6 : 0);
+      东西们.push(Object.assign({}, 东西, { x, y, vx: 东西.会动 ? Math.cos(角度) * 快慢 : 0, vy: 东西.会动 ? Math.sin(角度) * 快慢 : 0 }));
+    }
+  }
+}
+
+function 重新开始() {
+  分数 = 0; 剩余生命 = 设置.生命; 剩余时间 = 设置.倒计时; 第几关 = 1;
+  狗.x = 起点.x; 狗.y = 起点.y; 目标 = null; 闪烁 = 0; 慢的时间 = 0; 快的时间 = 0; 冲刺时间 = 0; 没动的时间 = 0;
+  飘字们 = []; 放东西(); 横幅 = 设置.关卡 ? 90 : 0;
+  状态 = "玩";
+}
+
+function 飘字(文字, x, y, 颜色) { 飘字们.push({ 文字, x, y, 颜色, 寿命: 50 }); }
+
+// 屏幕坐标换成游戏里的坐标
+function 位置(e) {
+  const r = canvas.getBoundingClientRect();
+  return { x: (e.clientX - r.left) / r.width * W, y: (e.clientY - r.top) / r.height * H };
+}
+
+// 屏幕右下角的按钮
+const 按钮们 = [
+  { 名字: "上", x: W - 130, y: H - 165, dx: 0, dy: -1 },
+  { 名字: "下", x: W - 130, y: H - 55, dx: 0, dy: 1 },
+  { 名字: "左", x: W - 185, y: H - 110, dx: -1, dy: 0 },
+  { 名字: "右", x: W - 75, y: H - 110, dx: 1, dy: 0 },
+];
+const 冲按钮 = { x: 80, y: H - 80, 半径: 46 };
+let 按住的按钮 = null;
+
+// ===== 事件：手指或鼠标按下 =====
+canvas.addEventListener("pointerdown", e => {
+  e.preventDefault();
+  const p = 位置(e);
+  if (状态 !== "玩") { 重新开始(); return; }
+  if (操作.冲刺 && Math.hypot(p.x - 冲按钮.x, p.y - 冲按钮.y) < 冲按钮.半径 + 8) { 开始冲刺(); return; }
+  if (操作.屏幕按钮) {
+    for (const 按钮 of 按钮们) if (Math.hypot(p.x - 按钮.x, p.y - 按钮.y) < 44) { 按住的按钮 = 按钮; return; }
+  }
+  if (操作.拖着走 && Math.hypot(p.x - 狗.x, p.y - (狗.y - 30)) < 80) { 拖着 = true; return; }
+  if (操作.点哪走哪) 目标 = p;
+});
+canvas.addEventListener("pointermove", e => { if (拖着 && 操作.拖着走) { const p = 位置(e); 狗.x = p.x; 狗.y = p.y + 30; } });
+window.addEventListener("pointerup", () => { 按住的按钮 = null; 拖着 = false; });
+
+// ===== 事件：按下键盘 =====
+document.addEventListener("keydown", e => {
+  if (状态 !== "玩" && (e.key === " " || e.key === "Enter")) { 重新开始(); return; }
+  if (操作.方向键 && ["ArrowUp", "ArrowDown", "ArrowLeft", "ArrowRight"].includes(e.key)) { 按着[e.key] = true; e.preventDefault(); }
+  if (操作.冲刺 && e.key === " ") { 开始冲刺(); e.preventDefault(); }
+});
+document.addEventListener("keyup", e => { 按着[e.key] = false; });
+
+function 开始冲刺() { if (冲刺时间 <= 0) { 冲刺时间 = 180; 飘字("冲！", 狗.x, 狗.y - 90, "#FF8A3D"); } }
+
+// 比特碰到场上的东西时，会发生什么
+function 碰到(东西) {
+  if (东西.碰到会 === "加分") {
+    东西.不见了 = true; 分数 += 东西.加几分 || 1;
+    飘字("+" + (东西.加几分 || 1), 东西.x, 东西.y - 40, "#18A87C");
+  } else if (东西.碰到会 === "扣命") {
+    if (闪烁 > 0) return;
+    闪烁 = 90;
+    if (设置.生命 > 0) {
+      剩余生命 -= 1; 飘字("−1 命", 东西.x, 东西.y - 40, "#E5484D");
+      if (剩余生命 <= 0) { 状态 = "结束"; 结束原因 = "没有命了"; }
+    } else { 状态 = "结束"; 结束原因 = "碰到" + 东西.名字 + "了"; }
+  } else if (东西.碰到会 === "变慢") {
+    if (慢的时间 <= 0) 飘字("变慢了", 狗.x, 狗.y - 90, "#2366D1");
+    慢的时间 = (东西.几秒 || 3) * 60;
+  } else if (东西.碰到会 === "变快") {
+    东西.不见了 = true; 快的时间 = (东西.几秒 || 3) * 60; 飘字("变快！", 狗.x, 狗.y - 90, "#FF8A3D");
+  } else if (东西.碰到会 === "结束") {
+    状态 = "结束"; 结束原因 = "碰到" + 东西.名字 + "了";
+  }
+}
+
+// 回到狗窝
+function 到家了() {
+  if (设置.关卡 && 第几关 < 设置.最后一关) {
+    第几关 += 1; 分数 += 5; 飘字("第 " + 第几关 + " 关！", W / 2, H / 2, "#FF8A3D");
+    狗.x = 起点.x; 狗.y = 起点.y; 目标 = null; 放东西(); 横幅 = 90;
+    if (设置.倒计时 > 0) 剩余时间 = 设置.倒计时;
+    return;
+  }
+  状态 = "回家了"; 结束原因 = 设置.关卡 ? "通关！" : "回家了！";
+}
+
+function 更新() {
+  帧数++;
+  if (状态 !== "玩") return;
+  let 速度 = 设置.走路速度;
+  if (慢的时间 > 0) { 速度 *= 0.45; 慢的时间--; }
+  if (快的时间 > 0) { 速度 *= 1.8; 快的时间--; }
+  if (冲刺时间 > 0) { 速度 *= 2; 冲刺时间--; }
+
+  // 按方向键或屏幕按钮：往那边走
+  let dx = 0, dy = 0;
+  if (操作.方向键) {
+    if (按着.ArrowLeft) dx -= 1; if (按着.ArrowRight) dx += 1;
+    if (按着.ArrowUp) dy -= 1; if (按着.ArrowDown) dy += 1;
+  }
+  if (操作.屏幕按钮 && 按住的按钮) { dx += 按住的按钮.dx; dy += 按住的按钮.dy; }
+  if (dx || dy) { const 长 = Math.hypot(dx, dy); 狗.x += dx / 长 * 速度; 狗.y += dy / 长 * 速度; 目标 = null; }
+  // 点了屏幕：走到点的地方
+  if (目标 && 操作.点哪走哪) {
+    const 距离 = Math.hypot(目标.x - 狗.x, 目标.y - 狗.y);
+    if (距离 < 速度) 目标 = null; else { 狗.x += (目标.x - 狗.x) / 距离 * 速度; 狗.y += (目标.y - 狗.y) / 距离 * 速度; }
+  }
+  狗.x = Math.max(30, Math.min(W - 30, 狗.x)); 狗.y = Math.max(60, Math.min(H - 10, 狗.y));
+  if (dx || dy || 目标 || 拖着) 没动的时间 = 0; else 没动的时间++;
+
+  // 会动的东西走来走去，碰到边就掉头
+  for (const 东西 of 东西们) {
+    if (!东西.会动) continue;
+    东西.x += 东西.vx; 东西.y += 东西.vy;
+    if (东西.x < 40 || 东西.x > W - 40) 东西.vx *= -1;
+    if (东西.y < 50 || 东西.y > H - 40) 东西.vy *= -1;
+  }
+  // 碰到了吗？
+  for (const 东西 of 东西们) {
+    if (!东西.不见了 && Math.hypot(东西.x - 狗.x, 东西.y - (狗.y - 25)) < 48) 碰到(东西);
+    if (状态 !== "玩") return;
+  }
+  东西们 = 东西们.filter(东西 => !东西.不见了);
+  if (Math.hypot(狗窝.x - 狗.x, 狗窝.y - (狗.y - 25)) < 60) 到家了();
+
+  if (设置.倒计时 > 0) {
+    剩余时间 -= 1 / 60;
+    if (剩余时间 <= 0) { 剩余时间 = 0; 状态 = "结束"; 结束原因 = "时间到"; }
+  }
+  if (闪烁 > 0) 闪烁--;
+  if (横幅 > 0) 横幅--;
+}
+
+// ===== 画画 =====
+function 画背景() {
+  const 颜色 = { 草地: ["#BFE6A8", "#A9D891"], 夜晚: ["#24345A", "#2D4170"], 雪地: ["#F4F8FF", "#DDE8F7"] }[设置.背景] || ["#BFE6A8", "#A9D891"];
+  ctx.fillStyle = 颜色[0]; ctx.fillRect(0, 0, W, H);
+  ctx.fillStyle = 颜色[1];
+  for (let i = 0; i < 26; i++) { ctx.beginPath(); ctx.arc((i * 151) % W, (i * 89) % H, 18 + (i % 3) * 6, 0, Math.PI * 2); ctx.fill(); }
+  if (设置.背景 === "夜晚") { ctx.fillStyle = "#FFFFFF"; for (let i = 0; i < 30; i++) ctx.fillRect((i * 97) % W, (i * 53) % H, 3, 3); }
+}
+function 画狗窝() {
+  ctx.fillStyle = "rgba(0,0,0,0.12)"; ctx.beginPath(); ctx.ellipse(狗窝.x, 狗窝.y + 44, 64, 12, 0, 0, Math.PI * 2); ctx.fill();
+  ctx.fillStyle = "#E0681C"; ctx.beginPath(); ctx.moveTo(狗窝.x - 66, 狗窝.y - 6); ctx.lineTo(狗窝.x, 狗窝.y - 62); ctx.lineTo(狗窝.x + 66, 狗窝.y - 6); ctx.closePath(); ctx.fill();
+  ctx.fillStyle = "#FFB27A"; 圆角矩形(狗窝.x - 52, 狗窝.y - 10, 104, 56, 8);
+  ctx.fillStyle = "#1E2A4A"; 圆角矩形(狗窝.x - 20, 狗窝.y + 6, 40, 40, 18);
+  画文字("家", 狗窝.x, 狗窝.y - 26, 22, "#FFFFFF");
+}
+function 画比特(x, y, 大小) {
+  const s = 大小 / 100;
+  ctx.save(); ctx.translate(x, y); ctx.scale(s, s);
+  // 影子
+  ctx.fillStyle = "rgba(36,48,94,.16)"; ctx.beginPath(); ctx.ellipse(0, 54, 40, 6, 0, 0, Math.PI * 2); ctx.fill();
+  // 后腿
+  ctx.fillStyle = "#F4F6FA"; ctx.strokeStyle = "#C5CCD8"; ctx.lineWidth = 1.5;
+  [[-28, 20], [28, 20]].forEach(([lx, ly]) => { 圆角矩形(lx - 8, ly, 16, 26, 8); });
+  ctx.fillStyle = "#FF8A3D";
+  [[-28, 42], [28, 42]].forEach(([lx, ly]) => { 圆角矩形(lx - 10, ly, 20, 12, 5); });
+  // 尾巴
+  ctx.strokeStyle = "#FF8A3D"; ctx.lineWidth = 9; ctx.lineCap = "round";
+  ctx.beginPath(); ctx.moveTo(26, 8); ctx.quadraticCurveTo(44, 14, 40, 30); ctx.stroke();
+  // 身体
+  ctx.fillStyle = "#F4F6FA"; 圆角矩形(-34, -18, 68, 56, 22);
+  ctx.strokeStyle = "#C5CCD8"; ctx.lineWidth = 2; ctx.beginPath();
+  (function(x,y,w,h,r){ctx.moveTo(x+r,y);ctx.arcTo(x+w,y,x+w,y+h,r);ctx.arcTo(x+w,y+h,x,y+h,r);ctx.arcTo(x,y+h,x,y,r);ctx.arcTo(x,y,x+w,y,r);ctx.closePath();})(-34,-18,68,56,22); ctx.stroke();
+  // 橙心 </>
+  ctx.fillStyle = "#FF8A3D";
+  ctx.beginPath();
+  ctx.moveTo(0, 22); ctx.bezierCurveTo(-18, 8, -26, -4, -16, -12); ctx.bezierCurveTo(-10, -16, -4, -12, 0, -6);
+  ctx.bezierCurveTo(4, -12, 10, -16, 16, -12); ctx.bezierCurveTo(26, -4, 18, 8, 0, 22);
+  ctx.fill();
+  ctx.strokeStyle = "#fff"; ctx.lineWidth = 2.4; ctx.lineCap = "round"; ctx.lineJoin = "round";
+  ctx.beginPath(); ctx.moveTo(-9, -14); ctx.lineTo(-15, -8); ctx.lineTo(-9, -2); ctx.stroke();
+  ctx.beginPath(); ctx.moveTo(-2.5, -14); ctx.lineTo(2.5, -2); ctx.stroke();
+  ctx.beginPath(); ctx.moveTo(9, -14); ctx.lineTo(15, -8); ctx.lineTo(9, -2); ctx.stroke();
+  // 前腿
+  ctx.fillStyle = "#F4F6FA";
+  [[-16, 24], [16, 24]].forEach(([lx, ly]) => { 圆角矩形(lx - 7, ly, 14, 24, 7); });
+  ctx.fillStyle = "#FF8A3D";
+  [[-16, 44], [16, 44]].forEach(([lx, ly]) => { 圆角矩形(lx - 9, ly, 18, 11, 5); });
+  // 垂耳：从头两侧下垂的胶囊耳（正旋转=下垂；负旋转会变成翅耳）
+  ctx.fillStyle = "#FF8A3D";
+  ctx.beginPath(); ctx.ellipse(-48, -48, 13, 30, 0.35, 0, Math.PI * 2); ctx.fill();
+  ctx.beginPath(); ctx.ellipse(48, -48, 13, 30, -0.35, 0, Math.PI * 2); ctx.fill();
+  ctx.fillStyle = "#FFC08A";
+  ctx.beginPath(); ctx.ellipse(-48, -46, 6, 18, 0.35, 0, Math.PI * 2); ctx.fill();
+  ctx.beginPath(); ctx.ellipse(48, -46, 6, 18, -0.35, 0, Math.PI * 2); ctx.fill();
+  // 头
+  ctx.fillStyle = "#F4F6FA"; 圆角矩形(-40, -88, 80, 72, 30);
+  ctx.strokeStyle = "#C5CCD8"; ctx.lineWidth = 2; ctx.beginPath();
+  (function(x,y,w,h,r){ctx.moveTo(x+r,y);ctx.arcTo(x+w,y,x+w,y+h,r);ctx.arcTo(x+w,y+h,x,y+h,r);ctx.arcTo(x,y+h,x,y,r);ctx.arcTo(x,y,x+w,y,r);ctx.closePath();})(-40,-88,80,72,30); ctx.stroke();
+  ctx.fillStyle = "rgba(255,255,255,.55)"; ctx.beginPath(); ctx.ellipse(-14, -70, 16, 8, -0.3, 0, Math.PI * 2); ctx.fill();
+  // 黑面罩
+  ctx.fillStyle = "#141820"; ctx.beginPath(); ctx.ellipse(0, -52, 28, 22, 0, 0, Math.PI * 2); ctx.fill();
+  // 四角星星眼 ✦
+  ctx.fillStyle = "#5BE0FF";
+  for (const [ex, ey] of [[-12, -54], [12, -54]]) {
+    ctx.beginPath();
+    const outer = 9, inner = 9 * 0.38;
+    for (let i = 0; i < 8; i++) {
+      const a = -Math.PI / 2 + i * Math.PI / 4;
+      const rad = i % 2 === 0 ? outer : inner;
+      const x = ex + Math.cos(a) * rad, y = ey + Math.sin(a) * rad;
+      if (i === 0) ctx.moveTo(x, y); else ctx.lineTo(x, y);
+    }
+    ctx.closePath(); ctx.fill();
+  }
+  // 像素小嘴
+  [[-5, -40], [-1, -38], [3, -40]].forEach(([mx, my]) => { 圆角矩形(mx, my, 2.6, 2.2, 0.4); });
+  // 天线：橙底座 + 白杆 + 白球
+  ctx.fillStyle = "#FF8A3D"; ctx.beginPath(); ctx.ellipse(0, -88, 7, 4, 0, 0, Math.PI * 2); ctx.fill();
+  ctx.strokeStyle = "#F2F4F8"; ctx.lineWidth = 4; ctx.lineCap = "round";
+  ctx.beginPath(); ctx.moveTo(0, -88); ctx.lineTo(0, -104); ctx.stroke();
+  ctx.fillStyle = "#FFFFFF"; ctx.strokeStyle = "#D0D6E2"; ctx.lineWidth = 1;
+  ctx.beginPath(); ctx.arc(0, -106, 5.5, 0, Math.PI * 2); ctx.fill(); ctx.stroke();
+  ctx.restore();
+}
+function 圆角矩形(x, y, w, h, r) {
+  r = Math.min(r, w / 2, h / 2);
+  ctx.beginPath(); ctx.moveTo(x + r, y); ctx.arcTo(x + w, y, x + w, y + h, r); ctx.arcTo(x + w, y + h, x, y + h, r);
+  ctx.arcTo(x, y + h, x, y, r); ctx.arcTo(x, y, x + w, y, r); ctx.closePath(); ctx.fill();
+}
+function 画表情(文字, x, y, 大小) {
+  ctx.font = 大小 + 'px "Apple Color Emoji","Segoe UI Emoji","Noto Color Emoji",sans-serif';
+  ctx.fillStyle = "#000"; ctx.textAlign = "center"; ctx.textBaseline = "middle"; ctx.fillText(文字, x, y);
+}
+function 画文字(文字, x, y, 大小, 颜色, 对齐) {
+  ctx.fillStyle = 颜色; ctx.font = "bold " + 大小 + 'px "PingFang SC","Microsoft YaHei",sans-serif';
+  ctx.textAlign = 对齐 || "center"; ctx.textBaseline = "middle"; ctx.fillText(文字, x, y);
+}
+function 画按钮() {
+  if (操作.屏幕按钮) {
+    for (const 按钮 of 按钮们) {
+      ctx.fillStyle = 按住的按钮 === 按钮 ? "rgba(30,42,74,0.75)" : "rgba(30,42,74,0.4)";
+      ctx.beginPath(); ctx.arc(按钮.x, 按钮.y, 36, 0, Math.PI * 2); ctx.fill();
+      画文字({ 上: "↑", 下: "↓", 左: "←", 右: "→" }[按钮.名字], 按钮.x, 按钮.y + 2, 36, "#FFFFFF");
+    }
+  }
+  if (操作.冲刺) {
+    ctx.fillStyle = 冲刺时间 > 0 ? "rgba(255,138,61,0.5)" : "#FF8A3D";
+    ctx.beginPath(); ctx.arc(冲按钮.x, 冲按钮.y, 冲按钮.半径, 0, Math.PI * 2); ctx.fill();
+    画文字("冲", 冲按钮.x, 冲按钮.y, 30, "#FFFFFF");
+  }
+}
+
+function 画() {
+  画背景();
+  画狗窝();
+  if (目标) { ctx.strokeStyle = "rgba(30,42,74,0.35)"; ctx.lineWidth = 3; ctx.setLineDash([8, 8]); ctx.beginPath(); ctx.moveTo(狗.x, 狗.y - 25); ctx.lineTo(目标.x, 目标.y); ctx.stroke(); ctx.setLineDash([]); }
+  for (const 东西 of 东西们) 画表情(东西.图案, 东西.x, 东西.y, 48);
+  const 显示狗 = 闪烁 === 0 || Math.floor(闪烁 / 6) % 2 === 0;
+  if (显示狗) {
+    if (设置.主角 === "比特") 画比特(狗.x, 狗.y, 设置.主角大小);
+    else 画表情(设置.主角, 狗.x, 狗.y - 设置.主角大小 * 0.45, 设置.主角大小);
+  }
+  for (const 字 of 飘字们) { ctx.globalAlpha = 字.寿命 / 50; 画文字(字.文字, 字.x, 字.y, 30, 字.颜色); 字.y -= 1; 字.寿命--; ctx.globalAlpha = 1; }
+  飘字们 = 飘字们.filter(字 => 字.寿命 > 0);
+  const 字色 = 设置.背景 === "夜晚" ? "#FFFFFF" : "#1E2A4A";
+  if (状态 === "玩") {
+    画按钮();
+    if (设置.显示分数) 画文字("分数 " + 分数, 24, 36, 32, 字色, "left");
+    if (设置.生命 > 0) 画文字("生命 " + "♥".repeat(Math.max(0, 剩余生命)), 24, 76, 28, "#E5484D", "left");
+    if (设置.倒计时 > 0) 画文字("倒计时 " + Math.ceil(剩余时间), W / 2, 36, 32, 字色);
+    if (设置.关卡) 画文字("第 " + 第几关 + " 关", W - 190, 36, 30, 字色, "right");
+    if (横幅 > 0 && 设置.关卡) { ctx.globalAlpha = Math.min(1, 横幅 / 30); 画文字("第 " + 第几关 + " 关", W / 2, H / 2 - 20, 72, "#FF8A3D"); ctx.globalAlpha = 1; }
+    const 能动 = 操作.方向键 || 操作.屏幕按钮 || 操作.点哪走哪 || 操作.拖着走;
+    if (!能动 && 没动的时间 > 120) 画文字("比特还不会动……怎么让它听你的指挥？", W / 2, H - 40, 28, 字色);
+  }
+  if (状态 === "准备") {
+    ctx.fillStyle = "rgba(255,255,255,0.6)"; ctx.fillRect(0, H / 2 - 80, W, 140);
+    画文字("把比特送回狗窝", W / 2, H / 2 - 30, 52, "#1E2A4A");
+    画文字("点一下，开始", W / 2, H / 2 + 30, 30, "#5B6683");
+  }
+  if (状态 === "结束" || 状态 === "回家了") {
+    ctx.fillStyle = 状态 === "回家了" ? "rgba(24,168,124,0.6)" : "rgba(30,42,74,0.55)"; ctx.fillRect(0, 0, W, H);
+    画文字(结束原因, W / 2, H / 2 - 50, 64, "#FFFFFF");
+    if (设置.显示分数) 画文字("得分 " + 分数, W / 2, H / 2 + 20, 44, "#FFC93D");
+    画文字("点一下，再来一次", W / 2, H / 2 + 80, 30, "#FFFFFF");
+  }
+}
+
+function 游戏循环() { 更新(); 画(); requestAnimationFrame(游戏循环); }
+放东西();
+游戏循环();
+</script>
+</body>
+</html>

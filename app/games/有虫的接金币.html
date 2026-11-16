@@ -1,0 +1,267 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, user-scalable=no">
+<title>有虫的接金币</title>
+<style>
+  html, body { margin: 0; height: 100%; background: #FFF7EC; font-family: "PingFang SC", "Microsoft YaHei", sans-serif; color: #1E2A4A; touch-action: none; -webkit-user-select: none; user-select: none; -webkit-touch-callout: none; }
+  #box { height: 100%; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 10px; }
+  h1 { margin: 0; font-size: 28px; }
+  canvas { width: min(96vw, 160vh); max-height: 82vh; aspect-ratio: 16 / 9; border-radius: 18px; box-shadow: 0 6px 0 #F0E2CC; background: #FFF7EC; touch-action: none; }
+  p { margin: 0; color: #5B6683; font-size: 18px; }
+</style>
+</head>
+<body>
+<div id="box">
+  <h1>有虫的接金币</h1>
+  <canvas id="game" width="960" height="540"></canvas>
+  <p>按住下面的 ◀ ▶ 走路（也能按方向键），接金币、躲炸弹，攒够金币买护盾</p>
+</div>
+
+<script>
+// ===== 游戏设置：想改游戏，先改这里 =====
+const 设置 = {
+  一开始几条命: 3,        // 开局有几颗心
+  护盾价钱: 5,            // 买一个护盾要几个金币
+  移动速度: 8,            // 按住按钮时，比特每一帧走多远
+  掉东西间隔帧: 40,       // 隔几帧掉一个东西（60 帧 = 1 秒），越小掉得越多
+  炸弹出现机会: 0.3,     // 0～1，掉下来的东西里炸弹占多少
+};
+
+// ===== 下面是游戏程序 =====
+const canvas = document.getElementById("game");
+const ctx = canvas.getContext("2d");
+const W = canvas.width, H = canvas.height;
+const 地面Y = 420;          // 比特站的地面有多高
+const 方向表 = { 左: -1, 右: 1 };
+
+let 比特 = { x: W / 2, y: 地面Y - 42, 在走: false };
+let 心们 = [];             // 上面那一排心，每颗心：{ 图案, 跳一下 }
+let 金币 = 0;
+let 有护盾 = false;
+let 天上的东西 = [];        // 正在往下掉的东西：{ 是炸弹, x, y, 速度 }
+let 状态 = "玩";           // "玩" 或 "输了"
+let 帧数 = 0;
+let 话 = "", 话的寿命 = 0;  // 屏幕上的一句提示
+let 飘字们 = [];
+
+// 开一局新游戏
+function 开始() {
+  心们 = [];
+  for (let i = 0; i < 设置.一开始几条命 && i < 99; i++) 心们.push({ 图案: "❤️", 跳一下: 0 });
+  金币 = 0; 有护盾 = false; 天上的东西 = []; 飘字们 = [];
+  比特.x = W / 2;
+  状态 = "玩";
+}
+
+// 碰到炸弹：掉一条命
+function 掉一条命() {
+  心们.pop();                           // 去掉一颗心
+  心们[心们.length - 1].跳一下 = 20;     // 剩下的最后一颗心跳一下，提醒你
+  if (心们.length === 0) 输了();
+}
+
+function 输了() { 状态 = "输了"; }
+
+// 点右上角的按钮：花金币买一个护盾，下一次碰到炸弹不掉命
+function 买护盾() {
+  金币 = 金币 - 设置.护盾价钱;   // 付钱
+  有护盾 = true;
+  说一句("买到护盾了！");
+}
+
+// 每一帧：比特往按着的方向走
+function 移动比特() {
+  let 按着的键 = "";
+  if (按着.左) 按着的键 += "左";
+  if (按着.右) 按着的键 += "右";
+  if (按着的键) 比特.x += 设置.移动速度 * 方向表[按着的键];
+  比特.x = Math.max(40, Math.min(W - 40, 比特.x));   // 别走出画面
+  比特.在走 = 按着的键 !== "";
+}
+
+// 每一帧：天上掉东西，掉到比特身上就算接住
+function 东西往下掉() {
+  const 间隔 = Math.max(5, Math.round(设置.掉东西间隔帧) || 40);
+  if (帧数 % 间隔 === 0) {
+    天上的东西.push({ 是炸弹: Math.random() < 设置.炸弹出现机会, x: 70 + Math.random() * (W - 140), y: 110, 速度: 3 + Math.random() * 2 });
+  }
+  for (const 东西 of 天上的东西) {
+    东西.y += 东西.速度;
+    const 碰到了 = Math.abs(东西.x - 比特.x) < 60 && Math.abs(东西.y - 比特.y) < 45;
+    if (!碰到了 || 东西.接住了) continue;
+    东西.接住了 = true;
+    if (!东西.是炸弹) { 金币 += 1; 飘字("+1", 东西.x, 东西.y - 40, "#E0A100"); }
+    else if (有护盾) { 有护盾 = false; 飘字("护盾挡住了！", 东西.x, 东西.y - 40, "#3A7BD5"); }
+    else { 飘字("💥", 东西.x, 东西.y - 20, "#E5484D"); 掉一条命(); }
+  }
+  天上的东西 = 天上的东西.filter(东西 => !东西.接住了 && 东西.y < 地面Y + 20);
+}
+
+// ===== 操作：按住下面的 ◀ ▶ 走路（两根手指可以各按一个），或者按方向键 =====
+const 按着 = { 左: false, 右: false };      // 现在往哪边按着
+let 手指们 = {};                            // 每根按下的手指在哪个按钮上：{ 手指编号: "左" / "右" / null }
+const 键盘按着 = { 左: false, 右: false };
+const 方向按钮们 = [
+  { 方向: "左", x: 24, y: 458, 宽: 300, 高: 72 },
+  { 方向: "右", x: 636, y: 458, 宽: 300, 高: 72 },
+];
+const 护盾按钮 = { x: 690, y: 14, 宽: 250, 高: 56 };
+const 再来按钮 = { x: 360, y: 305, 宽: 240, 高: 72 };
+
+function 点在框里(x, y, 框) { return x >= 框.x && x <= 框.x + 框.宽 && y >= 框.y && y <= 框.y + 框.高; }
+function 哪个方向按钮(x, y) {
+  for (const b of 方向按钮们) if (点在框里(x, y, b)) return b.方向;
+  return null;
+}
+function 算一算按着() {
+  const 手指按的 = Object.values(手指们);
+  按着.左 = 键盘按着.左 || 手指按的.includes("左");
+  按着.右 = 键盘按着.右 || 手指按的.includes("右");
+}
+function 画布上的点(e) {
+  const r = canvas.getBoundingClientRect();
+  return { x: (e.clientX - r.left) / r.width * W, y: (e.clientY - r.top) / r.height * H };
+}
+canvas.addEventListener("pointerdown", e => {
+  const 点 = 画布上的点(e);
+  手指们[e.pointerId] = 哪个方向按钮(点.x, 点.y);
+  算一算按着();
+  if (状态 === "玩" && 点在框里(点.x, 点.y, 护盾按钮)) 买护盾();
+  if (状态 === "输了" && 点在框里(点.x, 点.y, 再来按钮)) 开始();
+});
+canvas.addEventListener("pointermove", e => {
+  if (!(e.pointerId in 手指们)) return;   // 没按下去的（比如鼠标在上面晃）不算
+  const 点 = 画布上的点(e);
+  手指们[e.pointerId] = 哪个方向按钮(点.x, 点.y);
+  算一算按着();
+});
+function 松开手指(e) { delete 手指们[e.pointerId]; 算一算按着(); }
+canvas.addEventListener("pointerup", 松开手指);
+canvas.addEventListener("pointercancel", 松开手指);
+canvas.addEventListener("pointerleave", 松开手指);
+document.addEventListener("keydown", e => {
+  const 方向 = { ArrowLeft: "左", ArrowRight: "右" }[e.key];
+  if (方向) { 键盘按着[方向] = true; 算一算按着(); e.preventDefault(); }
+});
+document.addEventListener("keyup", e => {
+  const 方向 = { ArrowLeft: "左", ArrowRight: "右" }[e.key];
+  if (方向) { 键盘按着[方向] = false; 算一算按着(); }
+});
+
+// ===== 画画的小工具 =====
+function 说一句(文字) { 话 = 文字; 话的寿命 = 150; }
+function 飘字(文字, x, y, 颜色) { 飘字们.push({ 文字, x, y, 颜色, 寿命: 40 }); }
+function 圆角矩形(x, y, w, h, r) {
+  ctx.beginPath(); ctx.moveTo(x + r, y); ctx.arcTo(x + w, y, x + w, y + h, r); ctx.arcTo(x + w, y + h, x, y + h, r);
+  ctx.arcTo(x, y + h, x, y, r); ctx.arcTo(x, y, x + w, y, r); ctx.closePath(); ctx.fill();
+}
+function 画表情(文字, x, y, 大小) {
+  ctx.font = 大小 + 'px "Apple Color Emoji","Segoe UI Emoji","Noto Color Emoji",sans-serif';
+  ctx.fillStyle = "#000"; ctx.textAlign = "center"; ctx.textBaseline = "middle"; ctx.fillText(文字, x, y);
+}
+function 画文字(文字, x, y, 大小, 颜色) {
+  ctx.fillStyle = 颜色; ctx.font = "bold " + 大小 + 'px "PingFang SC","Microsoft YaHei",sans-serif';
+  ctx.textAlign = "center"; ctx.textBaseline = "middle"; ctx.fillText(文字, x, y);
+}
+function 画金币(x, y, 大小) {
+  ctx.fillStyle = "#E3A21A"; ctx.beginPath(); ctx.arc(x, y, 大小 / 2, 0, Math.PI * 2); ctx.fill();
+  ctx.fillStyle = "#FFD447"; ctx.beginPath(); ctx.arc(x, y, 大小 / 2 - 4, 0, Math.PI * 2); ctx.fill();
+  ctx.strokeStyle = "#E3A21A"; ctx.lineWidth = 2; ctx.beginPath(); ctx.arc(x, y, 大小 / 2 - 9, 0, Math.PI * 2); ctx.stroke();
+  ctx.fillStyle = "#FFF3B8"; ctx.beginPath(); ctx.ellipse(x - 大小 * 0.14, y - 大小 * 0.14, 大小 * 0.07, 大小 * 0.14, 0.6, 0, Math.PI * 2); ctx.fill();
+}
+
+// 每一帧都会运行一次
+function 游戏循环() {
+  帧数++;
+  if (状态 === "玩") {
+    移动比特();
+    东西往下掉();
+  }
+
+  // 天空和地面
+  ctx.fillStyle = "#FFF7EC"; ctx.fillRect(0, 0, W, H);
+  const 天 = ctx.createLinearGradient(0, 84, 0, 446), 地面在哪 = (地面Y - 84) / 362;
+  天.addColorStop(0, "#C9E9FF"); 天.addColorStop(地面在哪, "#EEF8FF"); 天.addColorStop(地面在哪, "#F2D49B"); 天.addColorStop(1, "#E9C27F");
+  ctx.fillStyle = 天; 圆角矩形(16, 84, W - 32, 362, 18);
+  ctx.fillStyle = "#E2B873"; ctx.fillRect(16, 地面Y, W - 32, 4);
+  ctx.fillStyle = "rgba(255,255,255,0.85)";
+  for (let i = 0; i < 3; i++) {
+    const 云x = (i * 340 + 帧数 * 0.25) % (W + 160) - 80, 云y = 150 + i * 46;
+    ctx.beginPath(); ctx.arc(云x, 云y, 22, 0, Math.PI * 2); ctx.arc(云x + 26, 云y - 10, 28, 0, Math.PI * 2); ctx.arc(云x + 56, 云y, 22, 0, Math.PI * 2); ctx.fill();
+  }
+
+  // 天上掉的金币和炸弹
+  for (const 东西 of 天上的东西) {
+    if (东西.是炸弹) 画表情("💣", 东西.x, 东西.y, 54); else 画金币(东西.x, 东西.y, 46);
+  }
+
+  // 比特：脚下有影子，头上有天线，走路时一颠一颠
+  const 颠 = 比特.在走 ? -Math.abs(Math.sin(帧数 / 4)) * 8 : 0;
+  ctx.fillStyle = "rgba(30,42,74,0.15)"; ctx.beginPath(); ctx.ellipse(比特.x, 地面Y + 2, 38, 8, 0, 0, Math.PI * 2); ctx.fill();
+  ctx.strokeStyle = "#1E2A4A"; ctx.lineWidth = 4; ctx.beginPath(); ctx.moveTo(比特.x, 比特.y - 34 + 颠); ctx.lineTo(比特.x + 6, 比特.y - 58 + 颠); ctx.stroke();
+  ctx.fillStyle = "#FF8A3D"; ctx.beginPath(); ctx.arc(比特.x + 6, 比特.y - 60 + 颠, 7, 0, Math.PI * 2); ctx.fill();
+  画表情("🐶", 比特.x, 比特.y + 颠, 84);
+  if (有护盾) {
+    ctx.fillStyle = "rgba(91,192,255,0.18)"; ctx.strokeStyle = "#5BC0FF"; ctx.lineWidth = 5;
+    ctx.beginPath(); ctx.arc(比特.x, 比特.y + 颠 - 6, 60, 0, Math.PI * 2); ctx.fill(); ctx.stroke();
+  }
+
+  // 飘字
+  for (const 字 of 飘字们) {
+    ctx.globalAlpha = 字.寿命 / 40; 画文字(字.文字, 字.x, 字.y, 30, 字.颜色); 字.y -= 1.2; 字.寿命--; ctx.globalAlpha = 1;
+  }
+  飘字们 = 飘字们.filter(字 => 字.寿命 > 0);
+
+  // 上面：一排心、金币、护盾、买护盾的按钮
+  const 间距 = Math.min(46, 300 / Math.max(1, 心们.length));
+  for (let i = 0; i < 心们.length; i++) {
+    const 心 = 心们[i];
+    const 跳 = 心.跳一下 > 0 ? Math.sin(心.跳一下 / 20 * Math.PI) * 18 : 0;
+    画表情(心.图案, 40 + i * 间距, 44 - 跳, 36);
+    if (心.跳一下 > 0) 心.跳一下--;
+  }
+  画金币(385, 44, 38);
+  画文字("金币 " + 金币, 455, 45, 28, "#1E2A4A");
+  ctx.globalAlpha = 有护盾 ? 1 : 0.35; 画表情("🛡️", 548, 44, 32); ctx.globalAlpha = 1;
+  画文字(有护盾 ? "有护盾" : "没护盾", 612, 45, 22, 有护盾 ? "#3A7BD5" : "#9AA3B8");
+  ctx.fillStyle = "#FF8A3D"; 圆角矩形(护盾按钮.x, 护盾按钮.y, 护盾按钮.宽, 护盾按钮.高, 18);
+  画文字("买护盾（" + 设置.护盾价钱 + " 金币）", 护盾按钮.x + 护盾按钮.宽 / 2, 护盾按钮.y + 护盾按钮.高 / 2, 24, "#FFFFFF");
+
+  // 下面：两个大按钮，按着的那个变色
+  for (const b of 方向按钮们) {
+    ctx.fillStyle = 按着[b.方向] ? "#FFE2C2" : "#FFFFFF"; 圆角矩形(b.x, b.y, b.宽, b.高, 22);
+    ctx.strokeStyle = "#E2CDA8"; ctx.lineWidth = 4; ctx.stroke();
+    const 中x = b.x + b.宽 / 2, 中y = b.y + b.高 / 2, 朝 = b.方向 === "左" ? -1 : 1;
+    ctx.fillStyle = "#FF8A3D"; ctx.beginPath();
+    ctx.moveTo(中x + 朝 * 22, 中y); ctx.lineTo(中x - 朝 * 16, 中y - 22); ctx.lineTo(中x - 朝 * 16, 中y + 22); ctx.closePath(); ctx.fill();
+  }
+  画文字("按住走路", W / 2, 494, 22, "#9AA3B8");
+
+  // 输了：游戏结束、再来一局
+  if (状态 === "输了") {
+    ctx.fillStyle = "rgba(255,247,236,0.85)"; 圆角矩形(16, 84, W - 32, 362, 18);
+    画文字("游戏结束", W / 2, 200, 60, "#1E2A4A");
+    画文字("这一局攒了 " + 金币 + " 个金币", W / 2, 262, 28, "#5B6683");
+    ctx.fillStyle = "#FF8A3D"; 圆角矩形(再来按钮.x, 再来按钮.y, 再来按钮.宽, 再来按钮.高, 22);
+    画文字("再来一局", 再来按钮.x + 再来按钮.宽 / 2, 再来按钮.y + 再来按钮.高 / 2, 30, "#FFFFFF");
+  }
+
+  // 一句提示
+  if (话的寿命 > 0) {
+    话的寿命--;
+    ctx.globalAlpha = Math.min(1, 话的寿命 / 30);
+    const 宽 = Math.max(300, 话.length * 28 + 60);
+    ctx.fillStyle = "rgba(255,255,255,0.92)"; 圆角矩形(W / 2 - 宽 / 2, 104, 宽, 56, 18);
+    画文字(话, W / 2, 132, 26, "#1E2A4A");
+    ctx.globalAlpha = 1;
+  }
+
+  requestAnimationFrame(游戏循环);
+}
+开始();
+游戏循环();
+</script>
+</body>
+</html>

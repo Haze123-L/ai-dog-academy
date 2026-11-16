@@ -1,0 +1,454 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, user-scalable=no">
+<title>比特闯关</title>
+<style>
+  html, body { margin: 0; height: 100%; background: #FFF7EC; font-family: "PingFang SC", "Microsoft YaHei", sans-serif; color: #1E2A4A; touch-action: none; -webkit-user-select: none; user-select: none; }
+  #box { height: 100%; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 10px; }
+  h1 { margin: 0; font-size: 28px; }
+  canvas { width: min(96vw, 160vh); max-height: 82vh; aspect-ratio: 16 / 9; border-radius: 18px; box-shadow: 0 6px 0 #F0E2CC; background: #FFF7EC; touch-action: none; }
+  p { margin: 0; color: #5B6683; font-size: 18px; }
+</style>
+</head>
+<body>
+<div id="box">
+  <h1>比特闯关</h1>
+  <canvas id="game" width="960" height="540"></canvas>
+  <p>点右边的箭头（或者按方向键），比特走一格。吃星星、躲开刺，走到狗窝 🏠 就过关</p>
+</div>
+
+<script>
+// ===== 游戏设置：想改游戏，先改这里 =====
+const 设置 = {
+  有几条命: 3,            // 一共几条命
+  刺会扣命: true,          // 改成 false：踩到刺不扣命，也不用回起点
+  可以自己画: false,       // 改成 true：右上角出现「画关卡」按钮，可以在游戏里自己画关卡
+};
+
+// ===== 关卡地图：每一行是一串字，一个字是一格 =====
+// # 墙   . 路   S 起点   E 终点   * 星星   ^ 刺
+// 最多 8 行、14 列（多出来的不要）；短的行，后面补成墙；不认识的字当成路
+const 地图 = [
+  "############",
+  "#S...#....*#",
+  "####.#.##..#",
+  "#*...#.#^..#",
+  "#.####.#..##",
+  "#......#*.E#",
+  "############",
+];
+
+// ===== 下面是游戏程序 =====
+const canvas = document.getElementById("game");
+const ctx = canvas.getContext("2d");
+const W = canvas.width, H = canvas.height;
+const 地图区 = { x: 20, y: 70, 宽: 640, 高: 460 };   // 地图画在左边这一块里，居中
+const 最多几行 = 8, 最多几列 = 14;
+const 走法 = { 上: [-1, 0], 下: [1, 0], 左: [0, -1], 右: [0, 1] };   // 往哪走：行变多少、列变多少
+// 认得的字（小写的 s、e，全角的符号也认）；别的字都当成路
+const 认得的字 = { "#": "#", ".": ".", "S": "S", "E": "E", "*": "*", "^": "^", "s": "S", "e": "E", "＃": "#", "．": ".", "。": ".", "Ｓ": "S", "Ｅ": "E", "＊": "*", "＾": "^" };
+
+let 当前地图 = null;      // 现在用的关卡：当前地图[行][列] 是一个字（第一次开始时从「地图」读进来；画关卡改的就是它）
+let 地图是空的 = false;
+let 场地 = [];            // 这一局的地图（吃掉的星星会变成路）
+let 行数 = 0, 列数 = 0, 格子大小 = 40, 地图X = 0, 地图Y = 0;
+let 起点 = { 行: 0, 列: 0 };
+let 比特 = { 行: 0, 列: 0 };       // 比特在第几行、第几列
+let 比特画在 = { 行: 0, 列: 0 };   // 画的时候慢慢滑过去
+let 星星数 = 0, 星星总数 = 0;
+let 命 = 3;
+let 状态 = "玩";          // "玩"、"过关"、"输了"、"画"（画关卡）
+let 画笔 = "#";           // 画关卡时选中的格子
+let 按着画 = false;
+let 帧数 = 0;
+let 话 = "", 话的寿命 = 0;  // 屏幕上的一句提示
+let 飘字们 = [];
+let 受伤 = 0, 跳 = 0;     // 踩到刺闪一闪；走一步跳一下
+
+// 设置里写 true / false（写成 "true"、"是" 也认）；写错了用默认的
+function 开着(值, 默认) {
+  if (值 === true || 值 === "true" || 值 === "是") return true;
+  if (值 === false || 值 === "false" || 值 === "否") return false;
+  return 默认;
+}
+function 几条命() { const n = Math.round(Number(设置.有几条命)); return n >= 1 ? Math.min(n, 99) : 3; }
+
+// 把「地图」整理成整整齐齐的格子：太大的切掉，短的行补墙，不认识的字当路，起点只留第一个
+function 整理地图(原来的) {
+  let 行们 = Array.isArray(原来的) ? 原来的 : typeof 原来的 === "string" ? 原来的.split("\n") : [];
+  行们 = 行们.slice(0, 最多几行).map(行 => Array.from(Array.isArray(行) ? 行.join("") : String(行 == null ? "" : 行)).slice(0, 最多几列));
+  while (行们.length && 行们[行们.length - 1].length === 0) 行们.pop();
+  const 宽 = Math.max(0, ...行们.map(行 => 行.length));
+  if (!宽) return [];
+  let 有起点了 = false;
+  return 行们.map(行 => {
+    const 新行 = 行.map(字 => 认得的字[字] || ".");
+    while (新行.length < 宽) 新行.push("#");
+    for (let i = 0; i < 新行.length; i++) if (新行[i] === "S") { if (有起点了) 新行[i] = "."; 有起点了 = true; }
+    return 新行;
+  });
+}
+// 地图是空的：先给一块四周是墙的空地（可以在上面画关卡）
+function 空白地图() {
+  const 结果 = [];
+  for (let 行 = 0; 行 < 7; 行++) { const 一行 = []; for (let 列 = 0; 列 < 12; 列++) 一行.push(行 === 0 || 列 === 0 || 行 === 6 || 列 === 11 ? "#" : "."); 结果.push(一行); }
+  return 结果;
+}
+function 读地图() {
+  当前地图 = 整理地图(地图);
+  地图是空的 = 当前地图.length === 0;
+  if (地图是空的) 当前地图 = 空白地图();
+}
+// 格子大小按地图大小自动算，地图在左边居中
+function 算大小() {
+  行数 = 当前地图.length; 列数 = 行数 ? 当前地图[0].length : 0;
+  格子大小 = 行数 ? Math.floor(Math.min(地图区.宽 / 列数, 地图区.高 / 行数, 80)) : 40;
+  地图X = 地图区.x + Math.floor((地图区.宽 - 格子大小 * 列数) / 2);
+  地图Y = 地图区.y + Math.floor((地图区.高 - 格子大小 * 行数) / 2);
+}
+function 数一数(字) { let n = 0; for (const 一行 of 场地) for (const 格 of 一行) if (格 === 字) n++; return n; }
+// 起点：有 S 就站在 S；没有就站在第一格路上
+function 找起点() {
+  for (const 要找 of ["S", ".", "不是墙"])
+    for (let 行 = 0; 行 < 行数; 行++) for (let 列 = 0; 列 < 列数; 列++)
+      if (场地[行][列] === 要找 || (要找 === "不是墙" && 场地[行][列] !== "#")) return { 行, 列 };
+  return { 行: 0, 列: 0 };
+}
+// 从起点出发，不穿墙，能不能走到终点
+function 走得到终点() {
+  const 去过 = new Set([起点.行 + "," + 起点.列]), 要走 = [起点];
+  while (要走.length) {
+    const 这格 = 要走.shift();
+    if (场地[这格.行][这格.列] === "E") return true;
+    for (const 方向 in 走法) {
+      const 行 = 这格.行 + 走法[方向][0], 列 = 这格.列 + 走法[方向][1];
+      if (行 < 0 || 列 < 0 || 行 >= 行数 || 列 >= 列数 || 场地[行][列] === "#" || 去过.has(行 + "," + 列)) continue;
+      去过.add(行 + "," + 列); 要走.push({ 行, 列 });
+    }
+  }
+  return false;
+}
+
+// 开一局新游戏（用当前地图，从起点出发）
+function 开始() {
+  if (!当前地图) 读地图();
+  算大小();
+  场地 = 当前地图.map(一行 => 一行.slice());
+  起点 = 找起点();
+  比特 = { 行: 起点.行, 列: 起点.列 }; 比特画在 = { 行: 起点.行, 列: 起点.列 };
+  星星数 = 0; 星星总数 = 数一数("*"); 命 = 几条命();
+  状态 = "玩"; 飘字们 = []; 受伤 = 0; 跳 = 0; 按着画 = false;
+  if (地图是空的) 说一句("地图是空的" + (开着(设置.可以自己画, false) ? "，点「画关卡」画一张吧" : ""));
+  else if (!数一数("E")) 说一句("地图上没有终点 E");
+  else if (!走得到终点()) 说一句("从起点走不到终点，被墙堵住了");
+}
+
+// 比特走一格
+function 走(方向) {
+  if (状态 !== "玩" || !走法[方向]) return;
+  const 行 = 比特.行 + 走法[方向][0], 列 = 比特.列 + 走法[方向][1];
+  if (行 < 0 || 列 < 0 || 行 >= 行数 || 列 >= 列数 || 场地[行][列] === "#") return 撞墙();
+  比特 = { 行, 列 }; 跳 = 8;
+  踩到(场地[行][列], 行, 列);
+}
+function 撞墙() { 飘字("咚", 比特.行, 比特.列, "#9AA3B8"); }
+// 走到一格上，会发生什么
+function 踩到(字, 行, 列) {
+  if (字 === "*") { 星星数++; 场地[行][列] = "."; 飘字("+1", 行, 列, "#E0A100"); }
+  else if (字 === "^") 踩到刺(行, 列);
+  else if (字 === "E") 过关();
+}
+function 踩到刺(行, 列) {
+  if (!开着(设置.刺会扣命, true)) { 飘字("哎哟", 行, 列, "#E5484D"); 说一句("好扎！还好刺不扣命"); return; }
+  命--; 受伤 = 40;
+  飘字("-1 命", 行, 列, "#E5484D");
+  if (命 <= 0) return 输了();
+  比特 = { 行: 起点.行, 列: 起点.列 }; 比特画在 = { 行: 起点.行, 列: 起点.列 };
+  说一句("踩到刺了！回到起点");
+}
+function 过关() { 状态 = "过关"; 说一句("过关！吃到 " + 星星数 + " 颗星"); }
+function 输了() { 命 = 0; 状态 = "输了"; 说一句("命没了！点「再来一次」"); }
+
+// ===== 画关卡：选一种格子，点哪画哪 =====
+const 格子种类 = [   // 右边能选的格子
+  { 字: "#", 叫: "墙", x: 748, y: 160 },
+  { 字: ".", 叫: "路", x: 872, y: 160 },
+  { 字: "*", 叫: "星星", x: 748, y: 252 },
+  { 字: "^", 叫: "刺", x: 872, y: 252 },
+  { 字: "S", 叫: "起点", x: 748, y: 344 },
+  { 字: "E", 叫: "终点", x: 872, y: 344 },
+];
+function 开始画() { 状态 = "画"; 话的寿命 = 0; 按着画 = false; }
+function 画一格(x, y) {
+  const 列 = Math.floor((x - 地图X) / 格子大小), 行 = Math.floor((y - 地图Y) / 格子大小);
+  if (行 < 0 || 列 < 0 || 行 >= 行数 || 列 >= 列数) return false;
+  if (画笔 === "S" || 画笔 === "E") for (const 一行 of 当前地图) for (let i = 0; i < 一行.length; i++) if (一行[i] === 画笔) 一行[i] = ".";   // 起点、终点只能有一个
+  当前地图[行][列] = 画笔;
+  地图是空的 = false;
+  return true;
+}
+function 试玩() {
+  开始();
+  if (地图是空的 || !数一数("E") || !走得到终点()) return;   // 有问题的话，开始() 已经说过了
+  说一句("用你画的关卡，出发！");
+}
+
+// ===== 操作：方向键，或者点右边的箭头 =====
+document.addEventListener("keydown", e => {
+  const 键 = { ArrowUp: "上", ArrowDown: "下", ArrowLeft: "左", ArrowRight: "右" }[e.key];
+  if (键) { 走(键); e.preventDefault(); }
+  if ((e.key === "Enter" || e.key === " ") && (状态 === "过关" || 状态 === "输了")) 开始();
+});
+const 方向按钮们 = [
+  { 字: "上", x: 810, y: 230 }, { 字: "左", x: 720, y: 320 }, { 字: "右", x: 900, y: 320 }, { 字: "下", x: 810, y: 410 },
+];
+const 再来按钮 = { x: 340, y: 380, 宽: 240, 高: 70 };
+const 画关卡按钮 = { x: 810, y: 46, 宽: 180, 高: 60 };
+const 试玩按钮 = { x: 810, y: 462, 宽: 220, 高: 70 };
+const 点在 = (按钮, x, y) => Math.abs(x - 按钮.x) < 按钮.宽 / 2 && Math.abs(y - 按钮.y) < 按钮.高 / 2;
+function 换算(e) {
+  const r = canvas.getBoundingClientRect();
+  return { x: (e.clientX - r.left) / r.width * W, y: (e.clientY - r.top) / r.height * H };
+}
+canvas.addEventListener("pointerdown", e => {
+  const { x, y } = 换算(e);
+  if (状态 === "画") {
+    for (const 种 of 格子种类) if (点在({ x: 种.x, y: 种.y, 宽: 112, 高: 84 }, x, y)) { 画笔 = 种.字; return; }
+    if (点在(试玩按钮, x, y)) return 试玩();
+    按着画 = 画一格(x, y);
+    return;
+  }
+  if (开着(设置.可以自己画, false) && 点在(画关卡按钮, x, y)) return 开始画();
+  if (状态 === "过关" || 状态 === "输了") { if (点在(再来按钮, x, y)) 开始(); return; }
+  for (const b of 方向按钮们) if (Math.hypot(x - b.x, y - b.y) < 48) 走(b.字);
+});
+canvas.addEventListener("pointermove", e => { if (状态 === "画" && 按着画) { const { x, y } = 换算(e); 画一格(x, y); } });
+canvas.addEventListener("pointerup", () => { 按着画 = false; });
+canvas.addEventListener("pointercancel", () => { 按着画 = false; });
+
+// ===== 画画的小工具 =====
+function 说一句(文字) { 话 = 文字; 话的寿命 = 150; }
+function 飘字(文字, 行, 列, 颜色) { 飘字们.push({ 文字, x: 地图X + 列 * 格子大小 + 格子大小 / 2, y: 地图Y + 行 * 格子大小, 颜色, 寿命: 40 }); }
+function 圆角矩形(x, y, w, h, r) {
+  ctx.beginPath(); ctx.moveTo(x + r, y); ctx.arcTo(x + w, y, x + w, y + h, r); ctx.arcTo(x + w, y + h, x, y + h, r);
+  ctx.arcTo(x, y + h, x, y, r); ctx.arcTo(x, y, x + w, y, r); ctx.closePath(); ctx.fill();
+}
+function 画表情(文字, x, y, 大小) {
+  ctx.font = 大小 + 'px "Apple Color Emoji","Segoe UI Emoji","Noto Color Emoji",sans-serif';
+  ctx.fillStyle = "#000"; ctx.textAlign = "center"; ctx.textBaseline = "middle"; ctx.fillText(文字, x, y);
+}
+function 画文字(文字, x, y, 大小, 颜色) {
+  ctx.fillStyle = 颜色; ctx.font = "bold " + 大小 + 'px "PingFang SC","Microsoft YaHei",sans-serif';
+  ctx.textAlign = "center"; ctx.textBaseline = "middle"; ctx.fillText(文字, x, y);
+}
+function 画按钮(按钮, 文字, 底色) {
+  ctx.fillStyle = 底色; 圆角矩形(按钮.x - 按钮.宽 / 2, 按钮.y - 按钮.高 / 2, 按钮.宽, 按钮.高, 20);
+  画文字(文字, 按钮.x, 按钮.y, 28, "#FFFFFF");
+}
+
+// 画一格：x、y 是左上角，s 是大小
+function 画格子(字, x, y, s) {
+  if (字 === "#") {   // 墙：圆角砖块
+    ctx.fillStyle = "#C98559"; 圆角矩形(x + 1, y + 1, s - 2, s - 2, s * 0.2);
+    ctx.fillStyle = "#DE9E71"; 圆角矩形(x + 4, y + 3, s - 8, s * 0.3, s * 0.12);
+    ctx.strokeStyle = "rgba(110,60,30,0.35)"; ctx.lineWidth = 2;
+    ctx.beginPath();
+    ctx.moveTo(x + 5, y + s * 0.56); ctx.lineTo(x + s - 5, y + s * 0.56);
+    ctx.moveTo(x + s * 0.5, y + s * 0.56); ctx.lineTo(x + s * 0.5, y + s - 4);
+    ctx.stroke();
+    return;
+  }
+  ctx.fillStyle = 字 === "^" ? "#FFE6E1" : "#FFFDF7"; 圆角矩形(x + 2, y + 2, s - 4, s - 4, s * 0.2);
+  const cx = x + s / 2, cy = y + s / 2;
+  if (字 === "S") {   // 起点：绿圈 + 小旗
+    ctx.strokeStyle = "#2ECC9A"; ctx.lineWidth = Math.max(3, s * 0.07);
+    ctx.beginPath(); ctx.arc(cx, cy, s * 0.36, 0, Math.PI * 2); ctx.stroke();
+    ctx.strokeStyle = "#1E2A4A"; ctx.lineWidth = Math.max(2, s * 0.04);
+    ctx.beginPath(); ctx.moveTo(cx - s * 0.08, cy + s * 0.2); ctx.lineTo(cx - s * 0.08, cy - s * 0.22); ctx.stroke();
+    ctx.fillStyle = "#2ECC9A";
+    ctx.beginPath(); ctx.moveTo(cx - s * 0.08, cy - s * 0.22); ctx.lineTo(cx + s * 0.2, cy - s * 0.12); ctx.lineTo(cx - s * 0.08, cy - s * 0.02); ctx.closePath(); ctx.fill();
+  } else if (字 === "E") {   // 终点：狗窝
+    ctx.fillStyle = "#FFF0B8"; ctx.beginPath(); ctx.arc(cx, cy, s * 0.4, 0, Math.PI * 2); ctx.fill();
+    画表情("🏠", cx, cy, s * 0.7);
+  } else if (字 === "*") {
+    画表情("⭐", cx, cy + Math.sin(帧数 / 12 + x / 50) * s * 0.05, s * 0.62);
+  } else if (字 === "^") {   // 刺：三根红色尖尖
+    ctx.fillStyle = "#E5484D";
+    for (let i = 0; i < 3; i++) {
+      const 左 = x + s * (0.14 + i * 0.24);
+      ctx.beginPath(); ctx.moveTo(左, y + s * 0.78); ctx.lineTo(左 + s * 0.12, y + s * 0.24); ctx.lineTo(左 + s * 0.24, y + s * 0.78); ctx.closePath(); ctx.fill();
+    }
+    ctx.fillStyle = "#B8323A"; ctx.fillRect(x + s * 0.12, y + s * 0.76, s * 0.76, s * 0.08);
+  }
+}
+function 画地图(格子们) {
+  if (!行数) return;
+  ctx.fillStyle = "#F1E1C4"; 圆角矩形(地图X - 8, 地图Y - 8, 列数 * 格子大小 + 16, 行数 * 格子大小 + 16, 16);
+  for (let 行 = 0; 行 < 行数; 行++) for (let 列 = 0; 列 < 列数; 列++) 画格子(格子们[行][列], 地图X + 列 * 格子大小, 地图Y + 行 * 格子大小, 格子大小);
+}
+// 比特：机器小狗，头上有根天线
+function 画比特形象(x, y, 大小) {
+  const s = 大小 / 100;
+  ctx.save(); ctx.translate(x, y); ctx.scale(s, s);
+  // 影子
+  ctx.fillStyle = "rgba(36,48,94,.16)"; ctx.beginPath(); ctx.ellipse(0, 54, 40, 6, 0, 0, Math.PI * 2); ctx.fill();
+  // 后腿
+  ctx.fillStyle = "#F4F6FA"; ctx.strokeStyle = "#C5CCD8"; ctx.lineWidth = 1.5;
+  [[-28, 20], [28, 20]].forEach(([lx, ly]) => { 圆角矩形(lx - 8, ly, 16, 26, 8); });
+  ctx.fillStyle = "#FF8A3D";
+  [[-28, 42], [28, 42]].forEach(([lx, ly]) => { 圆角矩形(lx - 10, ly, 20, 12, 5); });
+  // 尾巴
+  ctx.strokeStyle = "#FF8A3D"; ctx.lineWidth = 9; ctx.lineCap = "round";
+  ctx.beginPath(); ctx.moveTo(26, 8); ctx.quadraticCurveTo(44, 14, 40, 30); ctx.stroke();
+  // 身体
+  ctx.fillStyle = "#F4F6FA"; 圆角矩形(-34, -18, 68, 56, 22);
+  ctx.strokeStyle = "#C5CCD8"; ctx.lineWidth = 2; ctx.beginPath();
+  (function(x,y,w,h,r){ctx.moveTo(x+r,y);ctx.arcTo(x+w,y,x+w,y+h,r);ctx.arcTo(x+w,y+h,x,y+h,r);ctx.arcTo(x,y+h,x,y,r);ctx.arcTo(x,y,x+w,y,r);ctx.closePath();})(-34,-18,68,56,22); ctx.stroke();
+  // 橙心 </>
+  ctx.fillStyle = "#FF8A3D";
+  ctx.beginPath();
+  ctx.moveTo(0, 22); ctx.bezierCurveTo(-18, 8, -26, -4, -16, -12); ctx.bezierCurveTo(-10, -16, -4, -12, 0, -6);
+  ctx.bezierCurveTo(4, -12, 10, -16, 16, -12); ctx.bezierCurveTo(26, -4, 18, 8, 0, 22);
+  ctx.fill();
+  ctx.strokeStyle = "#fff"; ctx.lineWidth = 2.4; ctx.lineCap = "round"; ctx.lineJoin = "round";
+  ctx.beginPath(); ctx.moveTo(-9, -14); ctx.lineTo(-15, -8); ctx.lineTo(-9, -2); ctx.stroke();
+  ctx.beginPath(); ctx.moveTo(-2.5, -14); ctx.lineTo(2.5, -2); ctx.stroke();
+  ctx.beginPath(); ctx.moveTo(9, -14); ctx.lineTo(15, -8); ctx.lineTo(9, -2); ctx.stroke();
+  // 前腿
+  ctx.fillStyle = "#F4F6FA";
+  [[-16, 24], [16, 24]].forEach(([lx, ly]) => { 圆角矩形(lx - 7, ly, 14, 24, 7); });
+  ctx.fillStyle = "#FF8A3D";
+  [[-16, 44], [16, 44]].forEach(([lx, ly]) => { 圆角矩形(lx - 9, ly, 18, 11, 5); });
+  // 垂耳：从头两侧下垂的胶囊耳（正旋转=下垂；负旋转会变成翅耳）
+  ctx.fillStyle = "#FF8A3D";
+  ctx.beginPath(); ctx.ellipse(-48, -48, 13, 30, 0.35, 0, Math.PI * 2); ctx.fill();
+  ctx.beginPath(); ctx.ellipse(48, -48, 13, 30, -0.35, 0, Math.PI * 2); ctx.fill();
+  ctx.fillStyle = "#FFC08A";
+  ctx.beginPath(); ctx.ellipse(-48, -46, 6, 18, 0.35, 0, Math.PI * 2); ctx.fill();
+  ctx.beginPath(); ctx.ellipse(48, -46, 6, 18, -0.35, 0, Math.PI * 2); ctx.fill();
+  // 头
+  ctx.fillStyle = "#F4F6FA"; 圆角矩形(-40, -88, 80, 72, 30);
+  ctx.strokeStyle = "#C5CCD8"; ctx.lineWidth = 2; ctx.beginPath();
+  (function(x,y,w,h,r){ctx.moveTo(x+r,y);ctx.arcTo(x+w,y,x+w,y+h,r);ctx.arcTo(x+w,y+h,x,y+h,r);ctx.arcTo(x,y+h,x,y,r);ctx.arcTo(x,y,x+w,y,r);ctx.closePath();})(-40,-88,80,72,30); ctx.stroke();
+  ctx.fillStyle = "rgba(255,255,255,.55)"; ctx.beginPath(); ctx.ellipse(-14, -70, 16, 8, -0.3, 0, Math.PI * 2); ctx.fill();
+  // 黑面罩
+  ctx.fillStyle = "#141820"; ctx.beginPath(); ctx.ellipse(0, -52, 28, 22, 0, 0, Math.PI * 2); ctx.fill();
+  // 四角星星眼 ✦
+  ctx.fillStyle = "#5BE0FF";
+  for (const [ex, ey] of [[-12, -54], [12, -54]]) {
+    ctx.beginPath();
+    const outer = 9, inner = 9 * 0.38;
+    for (let i = 0; i < 8; i++) {
+      const a = -Math.PI / 2 + i * Math.PI / 4;
+      const rad = i % 2 === 0 ? outer : inner;
+      const x = ex + Math.cos(a) * rad, y = ey + Math.sin(a) * rad;
+      if (i === 0) ctx.moveTo(x, y); else ctx.lineTo(x, y);
+    }
+    ctx.closePath(); ctx.fill();
+  }
+  // 像素小嘴
+  [[-5, -40], [-1, -38], [3, -40]].forEach(([mx, my]) => { 圆角矩形(mx, my, 2.6, 2.2, 0.4); });
+  // 天线：橙底座 + 白杆 + 白球
+  ctx.fillStyle = "#FF8A3D"; ctx.beginPath(); ctx.ellipse(0, -88, 7, 4, 0, 0, Math.PI * 2); ctx.fill();
+  ctx.strokeStyle = "#F2F4F8"; ctx.lineWidth = 4; ctx.lineCap = "round";
+  ctx.beginPath(); ctx.moveTo(0, -88); ctx.lineTo(0, -104); ctx.stroke();
+  ctx.fillStyle = "#FFFFFF"; ctx.strokeStyle = "#D0D6E2"; ctx.lineWidth = 1;
+  ctx.beginPath(); ctx.arc(0, -106, 5.5, 0, Math.PI * 2); ctx.fill(); ctx.stroke();
+  ctx.restore();
+}
+
+function 画比特() {
+  const s = 格子大小;
+  比特画在.行 += (比特.行 - 比特画在.行) * 0.35; 比特画在.列 += (比特.列 - 比特画在.列) * 0.35;
+  if (受伤 > 0) { 受伤--; if (Math.floor(受伤 / 5) % 2) return; }
+  const 跳高 = 跳 > 0 ? Math.sin(跳 / 8 * Math.PI) * s * 0.15 : 0;
+  if (跳 > 0) 跳--;
+  const cx = 地图X + 比特画在.列 * s + s / 2, cy = 地图Y + 比特画在.行 * s + s / 2 - 跳高;
+  画比特形象(cx, cy, s * 0.78);
+}
+// 顶上：星星、命
+function 画顶上() {
+  if (状态 === "画") { 画文字("画关卡：先选右边的格子，再点地图上的格子", 340, 36, 24, "#1E2A4A"); return; }
+  ctx.fillStyle = "#FFFFFF"; 圆角矩形(30, 12, 250, 48, 24); 圆角矩形(300, 12, 340, 48, 24);
+  画表情("⭐", 64, 36, 28); 画文字("星星 " + 星星数 + " / " + 星星总数, 168, 37, 26, "#1E2A4A");
+  画文字("命", 336, 37, 26, "#1E2A4A");
+  const 一共 = 几条命();
+  if (一共 <= 8) for (let i = 0; i < 一共; i++) 画表情(i < 命 ? "❤️" : "🤍", 376 + i * 32, 36, 24);
+  else { 画表情("❤️", 380, 36, 24); 画文字("× " + 命, 430, 37, 26, "#1E2A4A"); }
+}
+// 右边：方向按钮；画关卡时是格子种类和「试玩」
+function 画右边() {
+  if (状态 === "画") {
+    画文字("画关卡", 810, 46, 32, "#1E2A4A");
+    画文字("选一种格子", 810, 94, 22, "#5B6683");
+    for (const 种 of 格子种类) {
+      const 选中 = 种.字 === 画笔;
+      ctx.fillStyle = 选中 ? "#FF8A3D" : "#E2CDA8"; 圆角矩形(种.x - 56, 种.y - 42, 112, 84, 18);
+      ctx.fillStyle = 选中 ? "#FFF3E6" : "#FFFFFF"; 圆角矩形(种.x - 52, 种.y - 38, 104, 76, 15);
+      ctx.fillStyle = "#F1E1C4"; 圆角矩形(种.x - 50, 种.y - 24, 48, 48, 10);
+      画格子(种.字, 种.x - 48, 种.y - 22, 44);
+      画文字(种.叫, 种.x + 24, 种.y, 种.叫.length > 1 ? 22 : 26, "#1E2A4A");
+    }
+    画按钮(试玩按钮, "试玩", "#2ECC9A");
+    return;
+  }
+  if (开着(设置.可以自己画, false)) 画按钮(画关卡按钮, "画关卡", "#4C7DFF");
+  for (const b of 方向按钮们) {
+    ctx.fillStyle = "#FFFFFF"; ctx.beginPath(); ctx.arc(b.x, b.y, 44, 0, Math.PI * 2); ctx.fill();
+    ctx.strokeStyle = "#E2CDA8"; ctx.lineWidth = 4; ctx.stroke();
+    画文字(b.字, b.x, b.y, 30, "#FF8A3D");
+  }
+  画文字("走到 🏠 就过关", 810, 500, 22, "#5B6683");
+}
+// 过关、输了：盖一块牌子，下面是「再来一次」
+function 画结果() {
+  const cx = 地图区.x + 地图区.宽 / 2, cy = 地图区.y + 地图区.高 / 2;
+  ctx.fillStyle = "rgba(255,247,236,0.75)"; 圆角矩形(地图区.x, 地图区.y, 地图区.宽, 地图区.高, 18);
+  ctx.fillStyle = "#F0E2CC"; 圆角矩形(cx - 220, cy - 124, 440, 262, 26);
+  ctx.fillStyle = "#FFFFFF"; 圆角矩形(cx - 220, cy - 130, 440, 260, 26);
+  if (状态 === "过关") { 画文字("过关！", cx, cy - 82, 50, "#18A87C"); 画文字("吃到 " + 星星数 + " 颗星", cx, cy - 32, 28, "#1E2A4A"); }
+  else { 画文字("命没了", cx, cy - 82, 50, "#E5484D"); 画文字("吃到 " + 星星数 + " 颗星，再试一次吧", cx, cy - 32, 26, "#5B6683"); }
+  const 画几颗 = Math.min(星星总数, 8);
+  for (let i = 0; i < 画几颗; i++) {
+    ctx.globalAlpha = i < 星星数 ? 1 : 0.25;
+    画表情("⭐", cx + (i - (画几颗 - 1) / 2) * 40, cy + 16, 32);
+    ctx.globalAlpha = 1;
+  }
+  画按钮(再来按钮, "再来一次", "#FF8A3D");
+}
+
+// 每一帧都会运行一次
+function 游戏循环() {
+  帧数++;
+  ctx.fillStyle = "#FFF7EC"; ctx.fillRect(0, 0, W, H);
+  画地图(状态 === "画" ? 当前地图 : 场地);
+  if (状态 !== "画") 画比特();
+
+  // 飘字
+  for (const 字 of 飘字们) {
+    ctx.globalAlpha = 字.寿命 / 40; 画文字(字.文字, 字.x, 字.y, 30, 字.颜色); 字.y -= 1.2; 字.寿命--; ctx.globalAlpha = 1;
+  }
+  飘字们 = 飘字们.filter(字 => 字.寿命 > 0);
+
+  画顶上();
+  画右边();
+  if (状态 === "过关" || 状态 === "输了") 画结果();
+
+  // 一句提示
+  if (话的寿命 > 0) {
+    话的寿命--;
+    ctx.globalAlpha = Math.min(1, 话的寿命 / 30);
+    ctx.fillStyle = "rgba(255,255,255,0.94)"; 圆角矩形(地图区.x + 50, 地图区.y + 6, 地图区.宽 - 100, 56, 18);
+    画文字(话, 地图区.x + 地图区.宽 / 2, 地图区.y + 34, 26, "#1E2A4A");
+    ctx.globalAlpha = 1;
+  }
+
+  requestAnimationFrame(游戏循环);
+}
+开始();
+游戏循环();
+</script>
+</body>
+</html>

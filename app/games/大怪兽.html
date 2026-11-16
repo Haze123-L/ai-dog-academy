@@ -1,0 +1,586 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, user-scalable=no">
+<title>大怪兽</title>
+<style>
+  html, body { margin: 0; height: 100%; background: #FFF7EC; font-family: "PingFang SC", "Microsoft YaHei", sans-serif; color: #1E2A4A; touch-action: none; }
+  #box { height: 100%; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 10px; }
+  h1 { margin: 0; font-size: 28px; }
+  canvas { width: min(96vw, 160vh); max-height: 82vh; aspect-ratio: 16 / 9; border-radius: 18px; box-shadow: 0 6px 0 #F0E2CC; background: #FFF7EC; }
+  p { margin: 0; color: #5B6683; font-size: 18px; }
+</style>
+</head>
+<body>
+<div id="box">
+  <h1>大怪兽</h1>
+  <canvas id="game" width="960" height="540"></canvas>
+  <p>点草地，比特就走过去；收齐星星，或者点 ❄️ 用雪球打倒怪兽</p>
+</div>
+
+<script>
+// ===== 游戏设置：想改游戏，先改这里 =====
+const 设置 = {
+  比特有几颗心: 3,        // 被怪兽碰到少一颗，没了就输
+  星星有几颗: 6,          // 草地上有几颗星星，收齐就赢
+  怪兽血量: 10,           // 雪球打中一次少 1，打到 0 也赢
+  靠近是多近: 180,        // 比特离怪兽多近算"靠近"（像素）
+  可以扔雪球: true,       // 改成 false：没有雪球按钮
+};
+
+// ===== 状态表：怪兽有几种状态，每一行是一种 =====
+// 名字：状态叫什么；样子：一个 emoji
+// 什么时候：什么时候变成这个状态——"一开始" "比特靠近" "比特走远" "被打中" "血量剩一半" "过了5秒"（数字可以改）
+// 做什么："不动" "睡觉" "慢慢走" "追比特" "跑得飞快" "逃跑" "喷火"
+const 状态们 = [
+  { 名字: "巡逻", 样子: "👹", 什么时候: "一开始", 做什么: "慢慢走" },
+];
+
+// ===== 下面是游戏程序 =====
+const canvas = document.getElementById("game");
+const ctx = canvas.getContext("2d");
+const W = canvas.width, H = canvas.height;
+const 场地 = { x: 16, y: 52, 宽: 672, 高: 472 };     // 左边的草地
+const 面板X = 704, 面板宽 = 240;                       // 右边的状态表
+const 雪球按钮 = { x: 824, y: 466, 半径: 50 };
+const 再来按钮 = { x: 场地.x + 场地.宽 / 2, y: 场地.y + 场地.高 / 2 + 80, 宽: 240, 高: 68 };
+const 比特半径 = 24, 怪兽半径 = 32;
+const 比特速度 = 4.5;
+const 怪兽速度 = { 慢慢走: 1.2, 追比特: 2.2, 跑得飞快: 3.9, 逃跑: 2.6 };
+const 草们 = [];
+for (let i = 0; i < 70; i++) 草们.push({ x: 场地.x + 20 + Math.random() * (场地.宽 - 40), y: 场地.y + 20 + Math.random() * (场地.高 - 40) });
+
+let 比特 = { x: 0, y: 0 };
+let 目标 = null;          // 比特要走去的地方
+let 按着 = false;         // 手指按在草地上
+let 怪兽 = { x: 0, y: 0, 血量: 10, 方向: 0, 闪: 0, 疼: 0, 朝左: false };
+let 星星们 = [];
+let 星星总数 = 0, 收到的星星 = 0;
+let 心 = 3, 最多几颗心 = 3, 最大血量 = 10;
+let 局面 = "玩";          // "玩" "赢了" "输了"
+let 结果 = "";
+let 状态表 = [];          // 从「状态们」整理出来的，每行多了：时候、做、认不认识
+let 现在状态 = -1;        // 怪兽现在在状态表的第几行（-1：表是空的）
+let 状态帧数 = 0;         // 在现在这个状态待了几帧（60 帧 = 1 秒）
+let 换了几次 = 0;
+let 比特在近处 = false;
+let 刚被打中 = false, 刚剩一半 = false, 剩一半过 = false;
+let 雪球们 = [], 火球们 = [];
+let 雪球冷却 = 0, 无敌 = 0;
+let 帧数 = 0;
+let 话 = "", 话的寿命 = 0;  // 屏幕上的一句提示
+let 飘字们 = [];
+
+// ===== 读状态表：认识的写法 =====
+const 中文数字 = { 零: 0, 一: 1, 两: 2, 二: 2, 三: 3, 四: 4, 五: 5, 六: 6, 七: 7, 八: 8, 九: 9 };
+function 读数(字) {
+  if (/^\d/.test(字)) return parseFloat(字);
+  if (字.includes("十")) { const 段 = 字.split("十"); return (段[0] ? 中文数字[段[0]] || 0 : 1) * 10 + (段[1] ? 中文数字[段[1]] || 0 : 0); }
+  return 中文数字[字] || 0;
+}
+// "什么时候" → { 类型, 秒 }；看不懂就是 null
+function 读什么时候(字) {
+  const 文 = String(字 == null ? "" : 字).replace(/\s/g, "");
+  if (!文) return null;
+  if (/一开始|开始|开局/.test(文)) return { 类型: "一开始" };
+  if (/一半|半血/.test(文)) return { 类型: "血量剩一半" };
+  if (/打中|被打|挨打|砸中|受伤/.test(文)) return { 类型: "被打中" };
+  const m = 文.match(/(\d+(?:\.\d+)?|[零一两二三四五六七八九十]+)秒/);
+  if (m) { const 秒 = 读数(m[1]); return 秒 > 0 ? { 类型: "过了", 秒 } : null; }
+  if (/走远|离开|跑远|远离|走开|离远/.test(文)) return { 类型: "比特走远" };
+  if (/靠近|走近|接近|过来|很近/.test(文)) return { 类型: "比特靠近" };
+  return null;
+}
+// "做什么" → 七种做法里的一种；看不懂就是 null
+const 做法们 = [
+  ["喷火", /喷火|吐火|火球|放火/],
+  ["睡觉", /睡/],
+  ["不动", /不动|站着|站住|停|不追/],
+  ["逃跑", /逃|躲|跑开|害怕/],
+  ["跑得飞快", /飞快|冲|快速|狂奔|很快|快跑|加速/],
+  ["追比特", /追/],
+  ["慢慢走", /慢慢|散步|巡逻|走来走去|随便走|闲逛|溜达/],
+];
+function 读做什么(字) {
+  const 文 = String(字 == null ? "" : 字).replace(/\s/g, "");
+  for (const [做法, 认] of 做法们) if (认.test(文)) return 做法;
+  return null;
+}
+function 整理状态表() {
+  状态表 = [];
+  const 表 = Array.isArray(状态们) ? 状态们 : [];
+  for (let i = 0; i < 表.length; i++) {
+    const 行 = 表[i] && typeof 表[i] === "object" ? 表[i] : {};
+    const 时候 = 读什么时候(行.什么时候), 做 = 读做什么(行.做什么);
+    状态表.push({
+      名字: String(行.名字 || "状态" + (i + 1)),
+      样子: String(行.样子 || "👹"),
+      什么时候: 行.什么时候 == null ? "" : String(行.什么时候),
+      做什么: 行.做什么 == null ? "" : String(行.做什么),
+      时候, 做: 做 || "不动",                       // 不认识的做法：当作"不动"
+      时候不认识: !时候, 做不认识: !做,
+    });
+  }
+}
+
+// ===== 小算术 =====
+function 数(值, 默认, 最小, 最大) { const n = Number(值); return Number.isFinite(n) ? Math.min(最大, Math.max(最小, Math.round(n))) : 默认; }
+function 距离(a, b) { return Math.hypot(a.x - b.x, a.y - b.y); }
+function 靠近距离() { return 数(设置.靠近是多近, 180, 20, 900); }
+function 可以扔() { return 设置.可以扔雪球 !== false; }
+function 夹在场地里(x, y, 半径) {
+  return { x: Math.min(场地.x + 场地.宽 - 半径 - 4, Math.max(场地.x + 半径 + 4, x)), y: Math.min(场地.y + 场地.高 - 半径 - 4, Math.max(场地.y + 半径 + 4, y)) };
+}
+
+// 开一局新游戏
+function 开始() {
+  最多几颗心 = 数(设置.比特有几颗心, 3, 1, 10); 心 = 最多几颗心;
+  最大血量 = 数(设置.怪兽血量, 10, 1, 99);
+  星星总数 = 数(设置.星星有几颗, 6, 0, 20); 收到的星星 = 0;
+  比特 = { x: 场地.x + 90, y: 场地.y + 场地.高 - 80 }; 目标 = null; 按着 = false;
+  怪兽 = { x: 场地.x + 场地.宽 * 0.7, y: 场地.y + 场地.高 * 0.38, 血量: 最大血量, 方向: Math.random() * Math.PI * 2, 闪: 0, 疼: 0, 朝左: true };
+  局面 = "玩"; 结果 = ""; 雪球们 = []; 火球们 = []; 飘字们 = []; 雪球冷却 = 0; 无敌 = 0;
+  刚被打中 = false; 刚剩一半 = false; 剩一半过 = false; 换了几次 = 0; 状态帧数 = 0;
+  放星星();
+  整理状态表();
+  const 一开始的 = 状态表.findIndex(行 => 行.时候 && 行.时候.类型 === "一开始");
+  现在状态 = 状态表.length ? Math.max(0, 一开始的) : -1;      // 没写"一开始"：用第一行
+  比特在近处 = 距离(比特, 怪兽) <= 靠近距离();
+  if (!状态表.length) 说一句("状态表是空的");
+  else if (状态表.some(行 => 行.时候不认识 || 行.做不认识)) 说一句("状态表里有看不懂的，标了「?」");
+  else 说一句("收齐星星，或者用雪球打倒怪兽！");
+}
+
+function 放星星() {
+  星星们 = [];
+  for (let i = 0; i < 星星总数; i++) {
+    for (let 试 = 0; 试 < 300; 试++) {
+      const 点 = { x: 场地.x + 40 + Math.random() * (场地.宽 - 80), y: 场地.y + 80 + Math.random() * (场地.高 - 120) };
+      const 好 = 距离(点, 比特) > 90 && 距离(点, 怪兽) > 110 && 星星们.every(星 => 距离(星, 点) > 70);
+      if (好 || 试 === 299) { 星星们.push(点); break; }
+    }
+  }
+}
+
+// ===== 状态怎么换：只看"刚刚发生"的事 =====
+function 检查换状态() {
+  const 发生了 = [];
+  if (刚剩一半) 发生了.push("血量剩一半");
+  if (刚被打中) 发生了.push("被打中");
+  刚剩一半 = false; 刚被打中 = false;
+  const d = 距离(比特, 怪兽);
+  if (!比特在近处 && d <= 靠近距离()) { 比特在近处 = true; 发生了.push("比特靠近"); }
+  else if (比特在近处 && d > 靠近距离() * 1.6) { 比特在近处 = false; 发生了.push("比特走远"); }
+  状态帧数++;
+  发生了.push("过了");                                        // 在现在这个状态又待了一帧
+  for (const 事 of 发生了) {
+    // 换到表里第一个"什么时候"等于这件事、而且不是现在状态的那一行
+    const i = 状态表.findIndex((行, 第几) => 第几 !== 现在状态 && 行.时候 && 行.时候.类型 === 事 &&
+      (事 !== "过了" || Math.round(行.时候.秒 * 60) === 状态帧数));
+    if (i >= 0) { 换状态(i); return; }
+  }
+}
+function 换状态(i) {
+  const 旧 = 状态表[现在状态], 新 = 状态表[i];
+  现在状态 = i; 状态帧数 = 0; 换了几次++; 怪兽.闪 = 30;
+  说一句("怪兽：" + (旧 ? 旧.名字 : "？") + " → " + 新.名字 + "！");
+}
+
+// ===== 怪兽照现在的状态做事 =====
+function 怪兽行动() {
+  const 行 = 状态表[现在状态], 做 = 行 ? 行.做 : "不动";
+  if (做 === "慢慢走") {
+    if (帧数 % 90 === 0) 怪兽.方向 += (Math.random() - 0.5) * 1.8;
+    怪兽走(Math.cos(怪兽.方向), Math.sin(怪兽.方向), 怪兽速度.慢慢走, true);
+  } else if (做 === "追比特" || 做 === "跑得飞快") {
+    const dx = 比特.x - 怪兽.x, dy = 比特.y - 怪兽.y, d = Math.hypot(dx, dy);
+    if (d > 2) 怪兽走(dx / d, dy / d, 怪兽速度[做], false);
+  } else if (做 === "逃跑") {
+    const dx = 怪兽.x - 比特.x, dy = 怪兽.y - 比特.y, d = Math.hypot(dx, dy) || 1;
+    怪兽走(dx / d, dy / d, 怪兽速度.逃跑, false);
+  } else if (做 === "喷火") {
+    if (状态帧数 % 90 === 30) 喷火球();                         // 每 1.5 秒喷一个
+  }
+  // "不动" "睡觉"：站着
+}
+function 怪兽走(dx, dy, 速度, 碰边转向) {
+  const 新x = 怪兽.x + dx * 速度, 新y = 怪兽.y + dy * 速度;
+  const 点 = 夹在场地里(新x, 新y, 怪兽半径 + 2);
+  if (碰边转向 && 点.x !== 新x) 怪兽.方向 = Math.PI - 怪兽.方向;
+  if (碰边转向 && 点.y !== 新y) 怪兽.方向 = -怪兽.方向;
+  怪兽.x = 点.x; 怪兽.y = 点.y;
+  if (Math.abs(dx) > 0.1) 怪兽.朝左 = dx < 0;
+}
+function 喷火球() {
+  const dx = 比特.x - 怪兽.x, dy = 比特.y - 怪兽.y, d = Math.hypot(dx, dy) || 1;
+  火球们.push({ x: 怪兽.x + dx / d * 30, y: 怪兽.y + dy / d * 30, vx: dx / d * 4.5, vy: dy / d * 4.5 });
+}
+function 怪兽被打中() {
+  怪兽.血量 = Math.max(0, 怪兽.血量 - 1); 怪兽.疼 = 12; 刚被打中 = true;
+  飘字("-1", 怪兽.x, 怪兽.y - 50, "#2D7FF9");
+  if (!剩一半过 && 怪兽.血量 <= 最大血量 / 2) { 剩一半过 = true; 刚剩一半 = true; }
+  if (怪兽.血量 <= 0) 赢了("把怪兽打倒了！");
+}
+
+// ===== 比特 =====
+function 比特走() {
+  if (!目标) return;
+  const dx = 目标.x - 比特.x, dy = 目标.y - 比特.y, d = Math.hypot(dx, dy);
+  if (d <= 比特速度) { 比特.x = 目标.x; 比特.y = 目标.y; 目标 = null; return; }
+  比特.x += dx / d * 比特速度; 比特.y += dy / d * 比特速度;
+}
+function 收星星() {
+  for (const 星 of 星星们) {
+    if (距离(星, 比特) < 比特半径 + 18) { 星.收了 = true; 收到的星星++; 飘字("+1", 星.x, 星.y - 20, "#E8A317"); }
+  }
+  星星们 = 星星们.filter(星 => !星.收了);
+  if (星星总数 > 0 && 收到的星星 >= 星星总数) 赢了("星星都收齐了！");
+}
+function 比特受伤(从x, 从y) {
+  if (无敌 > 0 || 局面 !== "玩") return;
+  心--; 无敌 = 90;                                              // 闪烁 1.5 秒，这时候不会再受伤
+  飘字("-1 ❤️", 比特.x, 比特.y - 40, "#E5484D");
+  let dx = 比特.x - 从x, dy = 比特.y - 从y, d = Math.hypot(dx, dy);
+  if (d < 1) { dx = -1; dy = 0; d = 1; }
+  比特 = 夹在场地里(比特.x + dx / d * 90, 比特.y + dy / d * 90, 比特半径);   // 被弹开
+  目标 = null;
+  if (心 <= 0) 输了("心没了！");
+}
+function 扔雪球() {
+  if (局面 !== "玩" || !可以扔() || 雪球冷却 > 0) return;
+  雪球冷却 = 30;                                                // 0.5 秒才能扔下一个
+  雪球们.push({ x: 比特.x, y: 比特.y - 10, 寿命: 120 });
+}
+function 雪球飞() {
+  for (const 球 of 雪球们) {
+    const dx = 怪兽.x - 球.x, dy = 怪兽.y - 球.y, d = Math.hypot(dx, dy) || 1, 步 = Math.min(10, d);
+    球.x += dx / d * 步; 球.y += dy / d * 步; 球.寿命--;
+    if (距离(球, 怪兽) < 怪兽半径 + 8) { 球.没了 = true; 怪兽被打中(); if (局面 !== "玩") break; }
+    if (球.寿命 <= 0) 球.没了 = true;
+  }
+  雪球们 = 雪球们.filter(球 => !球.没了);
+}
+function 火球飞() {
+  for (const 火 of 火球们) {
+    火.x += 火.vx; 火.y += 火.vy;
+    if (距离(火, 比特) < 比特半径 + 12) { 火.没了 = true; 比特受伤(火.x - 火.vx * 5, 火.y - 火.vy * 5); }
+    if (火.x < 场地.x || 火.x > 场地.x + 场地.宽 || 火.y < 场地.y || 火.y > 场地.y + 场地.高) 火.没了 = true;
+  }
+  火球们 = 火球们.filter(火 => !火.没了);
+}
+function 赢了(原因) { 局面 = "赢了"; 结果 = 原因; 说一句(原因); }
+function 输了(原因) { 局面 = "输了"; 结果 = 原因; 说一句(原因 + "点「再来一局」"); }
+
+// 每一帧：先动，再看有没有碰到，最后看要不要换状态
+function 更新() {
+  if (局面 !== "玩") return;
+  if (雪球冷却 > 0) 雪球冷却--;
+  if (无敌 > 0) 无敌--;
+  if (怪兽.闪 > 0) 怪兽.闪--;
+  if (怪兽.疼 > 0) 怪兽.疼--;
+  比特走();
+  收星星();
+  if (局面 !== "玩") return;
+  怪兽行动();
+  雪球飞();
+  if (局面 !== "玩") return;
+  火球飞();
+  if (距离(比特, 怪兽) < 比特半径 + 怪兽半径) 比特受伤(怪兽.x, 怪兽.y);
+  if (局面 !== "玩") return;
+  检查换状态();
+}
+
+// ===== 操作：点草地走过去，点 ❄️ 扔雪球；也可以用方向键和空格 =====
+function 在草地上(x, y) { return x >= 场地.x && x <= 场地.x + 场地.宽 && y >= 场地.y && y <= 场地.y + 场地.高; }
+function 点了(x, y) {
+  if (局面 !== "玩") {
+    if (Math.abs(x - 再来按钮.x) < 再来按钮.宽 / 2 && Math.abs(y - 再来按钮.y) < 再来按钮.高 / 2) 开始();
+    return;
+  }
+  if (可以扔() && Math.hypot(x - 雪球按钮.x, y - 雪球按钮.y) < 雪球按钮.半径 + 8) { 扔雪球(); return; }
+  if (在草地上(x, y)) { 目标 = 夹在场地里(x, y, 比特半径); 按着 = true; }
+}
+function 换算(e) { const r = canvas.getBoundingClientRect(); return { x: (e.clientX - r.left) / r.width * W, y: (e.clientY - r.top) / r.height * H }; }
+canvas.addEventListener("pointerdown", e => { const 点 = 换算(e); 点了(点.x, 点.y); });
+canvas.addEventListener("pointermove", e => { const 点 = 换算(e); if (按着 && 局面 === "玩" && 在草地上(点.x, 点.y)) 目标 = 夹在场地里(点.x, 点.y, 比特半径); });
+canvas.addEventListener("pointerup", () => { 按着 = false; });
+canvas.addEventListener("pointercancel", () => { 按着 = false; });
+document.addEventListener("keydown", e => {
+  const 方向 = { ArrowUp: [0, -1], ArrowDown: [0, 1], ArrowLeft: [-1, 0], ArrowRight: [1, 0] }[e.key];
+  if (方向 && 局面 === "玩") { 目标 = 夹在场地里(比特.x + 方向[0] * 50, 比特.y + 方向[1] * 50, 比特半径); e.preventDefault(); }
+  if (e.key === " ") { if (局面 === "玩") 扔雪球(); else 开始(); e.preventDefault(); }
+});
+
+// ===== 画画的小工具 =====
+function 说一句(文字) { 话 = 文字; 话的寿命 = 150; }
+function 飘字(文字, x, y, 颜色) { 飘字们.push({ 文字, x, y, 颜色, 寿命: 40 }); }
+function 圆角矩形(x, y, w, h, r) {
+  ctx.beginPath(); ctx.moveTo(x + r, y); ctx.arcTo(x + w, y, x + w, y + h, r); ctx.arcTo(x + w, y + h, x, y + h, r);
+  ctx.arcTo(x, y + h, x, y, r); ctx.arcTo(x, y, x + w, y, r); ctx.closePath(); ctx.fill();
+}
+function 画表情(文字, x, y, 大小) {
+  ctx.font = 大小 + 'px "Apple Color Emoji","Segoe UI Emoji","Noto Color Emoji",sans-serif';
+  ctx.fillStyle = "#000"; ctx.textAlign = "center"; ctx.textBaseline = "middle"; ctx.fillText(文字, x, y);
+}
+function 画文字(文字, x, y, 大小, 颜色) {
+  ctx.fillStyle = 颜色; ctx.font = "bold " + 大小 + 'px "PingFang SC","Microsoft YaHei",sans-serif';
+  ctx.textAlign = "center"; ctx.textBaseline = "middle"; ctx.fillText(文字, x, y);
+}
+// 从左往右写；太长就截短加"…"；返回写了多宽
+function 画左文字(文字, x, y, 大小, 颜色, 最宽) {
+  ctx.fillStyle = 颜色; ctx.font = "bold " + 大小 + 'px "PingFang SC","Microsoft YaHei",sans-serif';
+  ctx.textAlign = "left"; ctx.textBaseline = "middle";
+  let 字 = String(文字);
+  if (最宽) while (字.length > 1 && ctx.measureText(字).width > 最宽) 字 = 字.slice(0, -2) + "…";
+  ctx.fillText(字, x, y);
+  return ctx.measureText(字).width;
+}
+function 圆(x, y, r) { ctx.beginPath(); ctx.arc(x, y, r, 0, Math.PI * 2); ctx.fill(); }
+function 叫法(名字) { return /[中了啦的]$/.test(名字) || 名字.length >= 4 ? 名字 : 名字 + "中"; }   // "巡逻" → "巡逻中"
+
+function 画顶上() {
+  const 间隔 = Math.min(30, 220 / 最多几颗心);
+  for (let i = 0; i < 最多几颗心; i++) 画表情(i < 心 ? "❤️" : "🤍", 场地.x + 18 + i * 间隔, 26, 24);
+  画表情("⭐", 300, 26, 26);
+  画文字(收到的星星 + " / " + 星星总数, 352, 27, 24, "#1E2A4A");
+  画文字("怪兽血量", 482, 27, 18, "#5B6683");
+  ctx.fillStyle = "#F6D5C8"; 圆角矩形(526, 19, 100, 16, 8);
+  ctx.fillStyle = "#E5484D"; if (怪兽.血量 > 0) 圆角矩形(526, 19, Math.max(16, 100 * 怪兽.血量 / 最大血量), 16, 8);
+  画文字(怪兽.血量 + "/" + 最大血量, 660, 27, 18, "#1E2A4A");
+  画文字("状态表", 面板X + 面板宽 / 2, 27, 24, "#1E2A4A");
+}
+
+function 画场地() {
+  ctx.fillStyle = "#9CCB7E"; 圆角矩形(场地.x - 4, 场地.y - 4, 场地.宽 + 8, 场地.高 + 8, 20);
+  ctx.fillStyle = "#C3E8A5"; 圆角矩形(场地.x, 场地.y, 场地.宽, 场地.高, 16);
+  ctx.strokeStyle = "rgba(60,120,50,0.28)"; ctx.lineWidth = 2;
+  for (const 草 of 草们) {
+    ctx.beginPath(); ctx.moveTo(草.x - 5, 草.y - 6); ctx.lineTo(草.x - 1, 草.y + 2); ctx.lineTo(草.x + 4, 草.y - 7); ctx.stroke();
+  }
+  // 表里用到"靠近""走远"，就把"靠近"的范围画出来
+  if (状态表.some(行 => 行.时候 && (行.时候.类型 === "比特靠近" || 行.时候.类型 === "比特走远"))) {
+    ctx.fillStyle = 比特在近处 ? "rgba(229,72,77,0.10)" : "rgba(30,42,74,0.05)";
+    圆(怪兽.x, 怪兽.y, 靠近距离());
+  }
+}
+
+function 画怪兽() {
+  const 行 = 状态表[现在状态], 做 = 行 ? 行.做 : "不动";
+  const 样子 = 怪兽.血量 <= 0 ? "😵" : 行 ? 行.样子 : "👹";
+  const x = 怪兽.x + (怪兽.疼 > 0 ? (帧数 % 4 < 2 ? -3 : 3) : 0);
+  const y = 怪兽.y + (做 === "睡觉" ? Math.sin(帧数 / 20) * 2 : 0);
+  ctx.fillStyle = "rgba(30,42,74,0.15)"; ctx.beginPath(); ctx.ellipse(怪兽.x, 怪兽.y + 32, 30, 9, 0, 0, Math.PI * 2); ctx.fill();
+  if (怪兽.闪 > 0) { ctx.globalAlpha = 怪兽.闪 / 30; ctx.fillStyle = "#FFE066"; 圆(怪兽.x, 怪兽.y, 50 + (30 - 怪兽.闪)); ctx.globalAlpha = 1; }
+  if (怪兽.疼 > 0) { ctx.globalAlpha = 0.45; ctx.fillStyle = "#FF5A5A"; 圆(怪兽.x, 怪兽.y, 40); ctx.globalAlpha = 1; }
+  if (做 === "追比特" || 做 === "跑得飞快") { ctx.globalAlpha = 0.25; ctx.fillStyle = "#FF5A5A"; 圆(怪兽.x, 怪兽.y, 38); ctx.globalAlpha = 1; }
+  画表情(样子, x, y, 68);
+  if (局面 === "玩" && 怪兽.血量 > 0) {
+    if (做 === "睡觉") { const 飘 = (帧数 / 2) % 24; ctx.globalAlpha = 1 - 飘 / 24; 画表情("💤", x + 34 + 飘, y - 30 - 飘, 26); ctx.globalAlpha = 1; }
+    if (做 === "追比特") 画表情("💢", x + 30, y - 28, 24);
+    if (做 === "跑得飞快") 画表情("💨", x + (怪兽.朝左 ? 44 : -44), y + 12, 28);
+    if (做 === "逃跑") 画表情("💦", x + 30, y - 26, 22);
+    if (做 === "喷火" && 状态帧数 % 90 >= 10 && 状态帧数 % 90 < 30) 画表情("🔥", x, y + 26, 22);
+  }
+  // 头上：血条 + 气泡写现在的状态（太靠上就放到脚下）
+  const 在下面 = 怪兽.y - 场地.y < 110;
+  const 条Y = 在下面 ? 怪兽.y + 48 : 怪兽.y - 50, 泡Y = 在下面 ? 怪兽.y + 78 : 怪兽.y - 80;
+  ctx.fillStyle = "#F6D5C8"; 圆角矩形(怪兽.x - 40, 条Y - 5, 80, 10, 5);
+  ctx.fillStyle = "#E5484D"; if (怪兽.血量 > 0) 圆角矩形(怪兽.x - 40, 条Y - 5, Math.max(10, 80 * 怪兽.血量 / 最大血量), 10, 5);
+  const 泡字 = 行 ? 叫法(行.名字) : "？";
+  ctx.font = 'bold 18px "PingFang SC","Microsoft YaHei",sans-serif';
+  const 泡宽 = Math.min(200, Math.max(64, ctx.measureText(泡字).width + 26));
+  ctx.fillStyle = 怪兽.闪 > 0 ? "#FF8A3D" : "#E2CDA8"; 圆角矩形(怪兽.x - 泡宽 / 2 - 2, 泡Y - 17, 泡宽 + 4, 34, 15);
+  ctx.fillStyle = "#FFFFFF"; 圆角矩形(怪兽.x - 泡宽 / 2, 泡Y - 15, 泡宽, 30, 13);
+  画文字(泡字, 怪兽.x, 泡Y + 1, 18, "#1E2A4A");
+}
+
+function 画比特形象(x, y, 大小) {
+  const s = 大小 / 100;
+  ctx.save(); ctx.translate(x, y); ctx.scale(s, s);
+  // 影子
+  ctx.fillStyle = "rgba(36,48,94,.16)"; ctx.beginPath(); ctx.ellipse(0, 54, 40, 6, 0, 0, Math.PI * 2); ctx.fill();
+  // 后腿
+  ctx.fillStyle = "#F4F6FA"; ctx.strokeStyle = "#C5CCD8"; ctx.lineWidth = 1.5;
+  [[-28, 20], [28, 20]].forEach(([lx, ly]) => { 圆角矩形(lx - 8, ly, 16, 26, 8); });
+  ctx.fillStyle = "#FF8A3D";
+  [[-28, 42], [28, 42]].forEach(([lx, ly]) => { 圆角矩形(lx - 10, ly, 20, 12, 5); });
+  // 尾巴
+  ctx.strokeStyle = "#FF8A3D"; ctx.lineWidth = 9; ctx.lineCap = "round";
+  ctx.beginPath(); ctx.moveTo(26, 8); ctx.quadraticCurveTo(44, 14, 40, 30); ctx.stroke();
+  // 身体
+  ctx.fillStyle = "#F4F6FA"; 圆角矩形(-34, -18, 68, 56, 22);
+  ctx.strokeStyle = "#C5CCD8"; ctx.lineWidth = 2; ctx.beginPath();
+  (function(x,y,w,h,r){ctx.moveTo(x+r,y);ctx.arcTo(x+w,y,x+w,y+h,r);ctx.arcTo(x+w,y+h,x,y+h,r);ctx.arcTo(x,y+h,x,y,r);ctx.arcTo(x,y,x+w,y,r);ctx.closePath();})(-34,-18,68,56,22); ctx.stroke();
+  // 橙心 </>
+  ctx.fillStyle = "#FF8A3D";
+  ctx.beginPath();
+  ctx.moveTo(0, 22); ctx.bezierCurveTo(-18, 8, -26, -4, -16, -12); ctx.bezierCurveTo(-10, -16, -4, -12, 0, -6);
+  ctx.bezierCurveTo(4, -12, 10, -16, 16, -12); ctx.bezierCurveTo(26, -4, 18, 8, 0, 22);
+  ctx.fill();
+  ctx.strokeStyle = "#fff"; ctx.lineWidth = 2.4; ctx.lineCap = "round"; ctx.lineJoin = "round";
+  ctx.beginPath(); ctx.moveTo(-9, -14); ctx.lineTo(-15, -8); ctx.lineTo(-9, -2); ctx.stroke();
+  ctx.beginPath(); ctx.moveTo(-2.5, -14); ctx.lineTo(2.5, -2); ctx.stroke();
+  ctx.beginPath(); ctx.moveTo(9, -14); ctx.lineTo(15, -8); ctx.lineTo(9, -2); ctx.stroke();
+  // 前腿
+  ctx.fillStyle = "#F4F6FA";
+  [[-16, 24], [16, 24]].forEach(([lx, ly]) => { 圆角矩形(lx - 7, ly, 14, 24, 7); });
+  ctx.fillStyle = "#FF8A3D";
+  [[-16, 44], [16, 44]].forEach(([lx, ly]) => { 圆角矩形(lx - 9, ly, 18, 11, 5); });
+  // 垂耳：从头两侧下垂的胶囊耳（正旋转=下垂；负旋转会变成翅耳）
+  ctx.fillStyle = "#FF8A3D";
+  ctx.beginPath(); ctx.ellipse(-48, -48, 13, 30, 0.35, 0, Math.PI * 2); ctx.fill();
+  ctx.beginPath(); ctx.ellipse(48, -48, 13, 30, -0.35, 0, Math.PI * 2); ctx.fill();
+  ctx.fillStyle = "#FFC08A";
+  ctx.beginPath(); ctx.ellipse(-48, -46, 6, 18, 0.35, 0, Math.PI * 2); ctx.fill();
+  ctx.beginPath(); ctx.ellipse(48, -46, 6, 18, -0.35, 0, Math.PI * 2); ctx.fill();
+  // 头
+  ctx.fillStyle = "#F4F6FA"; 圆角矩形(-40, -88, 80, 72, 30);
+  ctx.strokeStyle = "#C5CCD8"; ctx.lineWidth = 2; ctx.beginPath();
+  (function(x,y,w,h,r){ctx.moveTo(x+r,y);ctx.arcTo(x+w,y,x+w,y+h,r);ctx.arcTo(x+w,y+h,x,y+h,r);ctx.arcTo(x,y+h,x,y,r);ctx.arcTo(x,y,x+w,y,r);ctx.closePath();})(-40,-88,80,72,30); ctx.stroke();
+  ctx.fillStyle = "rgba(255,255,255,.55)"; ctx.beginPath(); ctx.ellipse(-14, -70, 16, 8, -0.3, 0, Math.PI * 2); ctx.fill();
+  // 黑面罩
+  ctx.fillStyle = "#141820"; ctx.beginPath(); ctx.ellipse(0, -52, 28, 22, 0, 0, Math.PI * 2); ctx.fill();
+  // 四角星星眼 ✦
+  ctx.fillStyle = "#5BE0FF";
+  for (const [ex, ey] of [[-12, -54], [12, -54]]) {
+    ctx.beginPath();
+    const outer = 9, inner = 9 * 0.38;
+    for (let i = 0; i < 8; i++) {
+      const a = -Math.PI / 2 + i * Math.PI / 4;
+      const rad = i % 2 === 0 ? outer : inner;
+      const x = ex + Math.cos(a) * rad, y = ey + Math.sin(a) * rad;
+      if (i === 0) ctx.moveTo(x, y); else ctx.lineTo(x, y);
+    }
+    ctx.closePath(); ctx.fill();
+  }
+  // 像素小嘴
+  [[-5, -40], [-1, -38], [3, -40]].forEach(([mx, my]) => { 圆角矩形(mx, my, 2.6, 2.2, 0.4); });
+  // 天线：橙底座 + 白杆 + 白球
+  ctx.fillStyle = "#FF8A3D"; ctx.beginPath(); ctx.ellipse(0, -88, 7, 4, 0, 0, Math.PI * 2); ctx.fill();
+  ctx.strokeStyle = "#F2F4F8"; ctx.lineWidth = 4; ctx.lineCap = "round";
+  ctx.beginPath(); ctx.moveTo(0, -88); ctx.lineTo(0, -104); ctx.stroke();
+  ctx.fillStyle = "#FFFFFF"; ctx.strokeStyle = "#D0D6E2"; ctx.lineWidth = 1;
+  ctx.beginPath(); ctx.arc(0, -106, 5.5, 0, Math.PI * 2); ctx.fill(); ctx.stroke();
+  ctx.restore();
+}
+
+function 画比特() {
+  ctx.fillStyle = "rgba(30,42,74,0.15)"; ctx.beginPath(); ctx.ellipse(比特.x, 比特.y + 24, 22, 7, 0, 0, Math.PI * 2); ctx.fill();
+  if (无敌 > 0 && Math.floor(无敌 / 6) % 2 === 0) return;      // 闪烁
+  画比特形象(比特.x, 比特.y, 50);
+}
+
+function 画状态表() {
+  const 顶 = 场地.y, 底 = 404;
+  ctx.fillStyle = "#F0E2CC"; 圆角矩形(面板X, 顶 + 5, 面板宽, 底 - 顶, 18);
+  ctx.fillStyle = "#FFFFFF"; 圆角矩形(面板X, 顶, 面板宽, 底 - 顶, 18);
+  const 中 = 面板X + 面板宽 / 2;
+  if (!状态表.length) { 画表情("📋", 中, 顶 + 90, 48); 画文字("状态表是空的", 中, 顶 + 150, 22, "#9AA3B8"); 画文字("怪兽只会站着", 中, 顶 + 184, 18, "#9AA3B8"); return; }
+  const 太多 = 状态表.length > 8, 显示几行 = 太多 ? 7 : 状态表.length;
+  const 行高 = Math.min(80, (底 - 顶 - 12) / (太多 ? 8 : 状态表.length));
+  const 宽松 = 行高 >= 62;
+  for (let k = 0; k < 显示几行; k++) {
+    const 行 = 状态表[k], 是现在 = k === 现在状态;
+    const x0 = 面板X + 8, y0 = 顶 + 6 + k * 行高, 宽 = 面板宽 - 16, 高 = 行高 - 6;
+    if (是现在) {
+      const 鼓 = 怪兽.闪 / 10;
+      ctx.fillStyle = "#FF8A3D"; 圆角矩形(x0 - 2 - 鼓, y0 - 2 - 鼓, 宽 + 4 + 鼓 * 2, 高 + 4 + 鼓 * 2, 14);
+    }
+    ctx.fillStyle = 是现在 ? "#FFE9A8" : "#F7F1E6"; 圆角矩形(x0, y0, 宽, 高, 12);
+    画表情(行.样子, x0 + 24, y0 + 高 / 2, Math.min(34, 高 * 0.6));
+    const 字X = x0 + 48, 字宽 = 宽 - 48 - 26;
+    const 时候色 = 行.时候不认识 ? "#E5484D" : "#1E2A4A", 做色 = 行.做不认识 ? "#E5484D" : "#1E2A4A";
+    if (宽松) {
+      画左文字(行.名字, 字X, y0 + 16, 19, "#1E2A4A", 字宽 - (是现在 ? 34 : 0));
+      const a = 画左文字("什么时候 ", 字X, y0 + 38, 13, "#8A93A8");
+      画左文字(行.什么时候 || "（空）", 字X + a, y0 + 38, 14, 时候色, 字宽 + 16 - a);
+      const b = 画左文字("做什么 ", 字X, y0 + 57, 13, "#8A93A8");
+      画左文字(行.做什么 || "（空）", 字X + b, y0 + 57, 14, 做色, 字宽 - b);
+    } else {
+      画左文字(行.名字, 字X, y0 + 高 * 0.32, 16, "#1E2A4A", 字宽 - (是现在 ? 34 : 0));
+      画左文字((行.什么时候 || "（空）") + " → " + (行.做什么 || "（空）"), 字X, y0 + 高 * 0.72, 12, 行.时候不认识 || 行.做不认识 ? "#E5484D" : "#5B6683", 字宽);
+    }
+    if (是现在) { ctx.fillStyle = "#FF8A3D"; 圆角矩形(x0 + 宽 - 40, y0 + 5, 36, 20, 10); 画文字("现在", x0 + 宽 - 22, y0 + 15, 12, "#FFFFFF"); }
+    if (行.时候不认识 || 行.做不认识) {
+      ctx.fillStyle = "#E5484D"; 圆(x0 + 宽 - 14, y0 + 高 - 14, 10);
+      画文字("?", x0 + 宽 - 14, y0 + 高 - 13, 15, "#FFFFFF");
+    }
+  }
+  if (太多) 画文字("还有 " + (状态表.length - 7) + " 行…", 中, 顶 + 6 + 7 * 行高 + 行高 / 2, 15, "#8A93A8");
+}
+
+function 画雪球按钮() {
+  if (!可以扔()) return;
+  const b = 雪球按钮;
+  ctx.fillStyle = "#8FCDEB"; 圆(b.x, b.y, b.半径 + 4);
+  ctx.fillStyle = "#EAF7FF"; 圆(b.x, b.y, b.半径);
+  画表情("❄️", b.x, b.y - 10, 40);
+  画文字("扔雪球", b.x, b.y + 28, 16, "#2D7FF9");
+  if (雪球冷却 > 0) {
+    ctx.fillStyle = "rgba(255,255,255,0.65)";
+    ctx.beginPath(); ctx.moveTo(b.x, b.y); ctx.arc(b.x, b.y, b.半径, -Math.PI / 2, -Math.PI / 2 + Math.PI * 2 * 雪球冷却 / 30); ctx.closePath(); ctx.fill();
+  }
+}
+
+// 每一帧都会运行一次
+function 游戏循环() {
+  帧数++;
+  更新();
+
+  ctx.fillStyle = "#FFF7EC"; ctx.fillRect(0, 0, W, H);
+  画顶上();
+  画场地();
+
+  // 星星：轻轻上下浮
+  星星们.forEach((星, i) => 画表情("⭐", 星.x, 星.y + Math.sin(帧数 / 15 + i) * 3, 36));
+
+  // 比特要去的地方
+  if (目标 && 局面 === "玩") {
+    ctx.strokeStyle = "rgba(255,138,61,0.8)"; ctx.lineWidth = 3;
+    ctx.beginPath(); ctx.arc(目标.x, 目标.y, 14, 0, Math.PI * 2); ctx.stroke();
+  }
+
+  // 雪球和火球
+  for (const 球 of 雪球们) { ctx.fillStyle = "#9BCDE8"; 圆(球.x, 球.y, 11); ctx.fillStyle = "#FFFFFF"; 圆(球.x, 球.y, 9); }
+  for (const 火 of 火球们) 画表情("🔥", 火.x, 火.y, 30);
+
+  画怪兽();
+  画比特();
+
+  // 飘字
+  for (const 字 of 飘字们) {
+    ctx.globalAlpha = 字.寿命 / 40; 画文字(字.文字, 字.x, 字.y, 28, 字.颜色); 字.y -= 1.2; 字.寿命--; ctx.globalAlpha = 1;
+  }
+  飘字们 = 飘字们.filter(字 => 字.寿命 > 0);
+
+  画状态表();
+  画雪球按钮();
+
+  // 赢了 / 输了
+  if (局面 !== "玩") {
+    const 中x = 场地.x + 场地.宽 / 2, 中y = 场地.y + 场地.高 / 2;
+    ctx.fillStyle = "rgba(255,247,236,0.85)"; 圆角矩形(场地.x, 场地.y, 场地.宽, 场地.高, 16);
+    画表情(局面 === "赢了" ? "🏆" : "💫", 中x, 中y - 100, 72);
+    画文字(局面 === "赢了" ? "赢了！" : "输了…", 中x, 中y - 30, 46, 局面 === "赢了" ? "#18A87C" : "#E5484D");
+    画文字(结果, 中x, 中y + 14, 24, "#5B6683");
+    ctx.fillStyle = "#FF8A3D"; 圆角矩形(再来按钮.x - 再来按钮.宽 / 2, 再来按钮.y - 再来按钮.高 / 2, 再来按钮.宽, 再来按钮.高, 20);
+    画文字("再来一局", 再来按钮.x, 再来按钮.y, 28, "#FFFFFF");
+  }
+
+  // 一句提示
+  if (话的寿命 > 0) {
+    话的寿命--;
+    ctx.globalAlpha = Math.min(1, 话的寿命 / 30);
+    ctx.fillStyle = "rgba(255,255,255,0.92)"; 圆角矩形(场地.x + 70, 场地.y + 12, 场地.宽 - 140, 50, 18);
+    画文字(话, 场地.x + 场地.宽 / 2, 场地.y + 38, 24, "#1E2A4A");
+    ctx.globalAlpha = 1;
+  }
+
+  requestAnimationFrame(游戏循环);
+}
+开始();
+游戏循环();
+</script>
+</body>
+</html>
